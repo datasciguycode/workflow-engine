@@ -114,13 +114,26 @@ def main():
     check("A sees zero rows for B's item_events", status == 200 and body == [], f"{status} {body}")
 
     # --- (2a) A's item insert into B's workflow fails ---
+    # create_item's signature changed in Phase 1 (SPEC.md §2): it now derives the target stage
+    # from the workflow's own is_initial stage rather than taking one from the caller, so this
+    # now fails at the stages lookup (stages_select RLS) before ever reaching the items INSERT --
+    # it no longer exercises items_insert's own cross-account WITH CHECK. The direct-insert check
+    # right below restores that coverage independently of create_item's internal lookup.
     status, body = request(
         "POST",
         "/rest/v1/rpc/create_item",
         token_a,
-        {"p_workflow_id": ACCT2["workflow_id"], "p_stage_id": ACCT2["stage1_id"], "p_data": {}},
+        {"p_workflow_id": ACCT2["workflow_id"], "p_data": {}},
     )
     check("A's create_item into B's workflow fails", status >= 400, f"{status} {body}")
+
+    status, body = request(
+        "POST",
+        "/rest/v1/items",
+        token_a,
+        {"workflow_id": ACCT2["workflow_id"], "stage_id": ACCT2["stage1_id"], "data": {}},
+    )
+    check("A's direct items insert into B's workflow fails", status >= 400, f"{status} {body}")
 
     # --- (2b) A's move_stage on B's item fails ---
     status, body = request(
