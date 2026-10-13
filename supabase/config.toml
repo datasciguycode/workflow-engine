@@ -387,6 +387,13 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# mcp-server (testing aid, SPEC.md §6/§7 Phase 4a detour, 2026-10-13): verify_jwt is off because
+# Claude.ai's connector can't present a Supabase-issued JWT -- this function does its own
+# shared-secret check (CONNECTOR_SECRET) instead. Same reasoning as contractor-tracker's old
+# pilot/supabase/config.toml [functions.mcp-server] entry.
+[functions.mcp-server]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
