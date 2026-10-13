@@ -12,16 +12,24 @@ insert into public.accounts (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'Acct 1 (isolation test)')
   on conflict (id) do nothing;
 
-insert into public.account_members (account_id, user_id, role) values
-  ('11111111-1111-1111-1111-111111111111', '8f3a0d26-5d86-4b18-8068-dae74693d42f', 'owner')
+insert into public.account_members (account_id, user_id, role, display_name) values
+  ('11111111-1111-1111-1111-111111111111', '8f3a0d26-5d86-4b18-8068-dae74693d42f', 'owner', 'Dana (dispatcher)')
   on conflict (account_id, user_id) do nothing;
 
 -- Second acct_1 member for Phase 1b's decline/reopen test (SPEC.md §7's exit check needs two
 -- distinct actors -- dispatcher and mechanic -- not two separate accounts). auth.users row
 -- created via the Auth admin API, same as the two isolation-test users above.
-insert into public.account_members (account_id, user_id, role) values
-  ('11111111-1111-1111-1111-111111111111', 'e5445381-e390-4943-bc80-91ba0c60a048', 'member')
+insert into public.account_members (account_id, user_id, role, display_name) values
+  ('11111111-1111-1111-1111-111111111111', 'e5445381-e390-4943-bc80-91ba0c60a048', 'member', 'Max (mechanic)')
   on conflict (account_id, user_id) do nothing;
+
+-- Phase 4a: display_name added to account_members after these rows already existed locally --
+-- ON CONFLICT DO NOTHING above won't set it on a re-run, so a direct UPDATE handles that (same
+-- gotcha as is_terminal on payment_receipt_submitted below).
+update public.account_members set display_name = 'Dana (dispatcher)'
+  where user_id = '8f3a0d26-5d86-4b18-8068-dae74693d42f' and display_name is null;
+update public.account_members set display_name = 'Max (mechanic)'
+  where user_id = 'e5445381-e390-4943-bc80-91ba0c60a048' and display_name is null;
 
 insert into public.workflows (id, account_id, name) values
   ('11111111-1111-1111-1111-111111111112', '11111111-1111-1111-1111-111111111111', 'Acct 1 workflow')
