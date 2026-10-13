@@ -16,6 +16,13 @@ insert into public.account_members (account_id, user_id, role) values
   ('11111111-1111-1111-1111-111111111111', '8f3a0d26-5d86-4b18-8068-dae74693d42f', 'owner')
   on conflict (account_id, user_id) do nothing;
 
+-- Second acct_1 member for Phase 1b's decline/reopen test (SPEC.md §7's exit check needs two
+-- distinct actors -- dispatcher and mechanic -- not two separate accounts). auth.users row
+-- created via the Auth admin API, same as the two isolation-test users above.
+insert into public.account_members (account_id, user_id, role) values
+  ('11111111-1111-1111-1111-111111111111', 'e5445381-e390-4943-bc80-91ba0c60a048', 'member')
+  on conflict (account_id, user_id) do nothing;
+
 insert into public.workflows (id, account_id, name) values
   ('11111111-1111-1111-1111-111111111112', '11111111-1111-1111-1111-111111111111', 'Acct 1 workflow')
   on conflict (id) do nothing;
@@ -75,3 +82,15 @@ insert into public.stages (id, workflow_id, title, sequence_order, is_initial) v
   ('33333333-3333-3333-3333-333333333337', '33333333-3333-3333-3333-333333333330', 'invoicing', 7, false),
   ('33333333-3333-3333-3333-333333333338', '33333333-3333-3333-3333-333333333330', 'payment_receipt_submitted', 8, false)
   on conflict (id) do nothing;
+
+-- Phase 1b (SPEC.md §4 revised 2026-10-13): payment_receipt_submitted and closed are the two
+-- terminal stages -- invoicing is not (being invoiced isn't "done" until payment is received and
+-- the receipt is sent). ON CONFLICT DO NOTHING won't set is_terminal on the already-existing
+-- payment_receipt_submitted row, so a direct UPDATE handles that one (same gotcha as is_initial
+-- in Phase 1).
+insert into public.stages (id, workflow_id, title, sequence_order, is_initial, is_terminal) values
+  ('33333333-3333-3333-3333-333333333339', '33333333-3333-3333-3333-333333333330', 'closed', null, false, true)
+  on conflict (id) do nothing;
+
+update public.stages set is_terminal = true
+  where id = '33333333-3333-3333-3333-333333333338' and not is_terminal;
