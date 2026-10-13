@@ -94,3 +94,20 @@ insert into public.stages (id, workflow_id, title, sequence_order, is_initial, i
 
 update public.stages set is_terminal = true
   where id = '33333333-3333-3333-3333-333333333338' and not is_terminal;
+
+-- ===========================================================================
+-- Phase 3: SDLC workflow (SPEC.md §5), the second proof case -- exercises
+-- enforce_stage_order = true, which the mechanic workflow never needed.
+-- ===========================================================================
+
+insert into public.workflows (id, account_id, name, enforce_stage_order) values
+  ('44444444-4444-4444-4444-444444444440', '11111111-1111-1111-1111-111111111111', 'Feature Pipeline', true)
+  on conflict (id) do nothing;
+
+insert into public.stages (id, workflow_id, title, sequence_order, is_initial, is_terminal) values
+  ('44444444-4444-4444-4444-444444444441', '44444444-4444-4444-4444-444444444440', 'spec', 1, true, false),
+  ('44444444-4444-4444-4444-444444444442', '44444444-4444-4444-4444-444444444440', 'prototype', 2, false, false),
+  ('44444444-4444-4444-4444-444444444443', '44444444-4444-4444-4444-444444444440', 'refactor', 3, false, false),
+  ('44444444-4444-4444-4444-444444444444', '44444444-4444-4444-4444-444444444440', 'test', 4, false, false),
+  ('44444444-4444-4444-4444-444444444445', '44444444-4444-4444-4444-444444444440', 'deploy', 5, false, true)
+  on conflict (id) do nothing;
