@@ -6,3 +6,6 @@
 .env.keys
 .env.local
 .env.*.local
+
+# local function secrets (ANTHROPIC_API_KEY, etc.)
+.env
