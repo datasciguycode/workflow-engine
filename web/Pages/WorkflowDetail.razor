@@ -22,7 +22,19 @@ else
         {
             <FluentCard style="padding:12px; max-width:100%; box-sizing:border-box;">
                 <div><strong>@StageTitle(item.StageId)</strong></div>
-                <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">@item.Data.ToJsonString()</div>
+                @if (item.Data.Count == 0)
+                {
+                    <div style="opacity:0.7;">(no data)</div>
+                }
+                else
+                {
+                    @foreach (var (key, value) in item.Data)
+                    {
+                        <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
+                            <span style="opacity:0.7;">@key:</span> @FieldText(value)
+                        </div>
+                    }
+                }
             </FluentCard>
         }
         @if (_items.Count == 0)
@@ -68,6 +80,17 @@ else
             _error = $"Couldn't load workflow: {ex.Message}";
         }
     }
+
+    // data is domain-agnostic jsonb -- no field names can be assumed here (a mechanic
+    // workflow's "vehicle" means nothing to the SDLC workflow's "feature title"), so this
+    // renders scalars plainly and falls back to compact JSON only for nested objects/arrays.
+    private static string FieldText(JsonNode? value) =>
+        value switch
+        {
+            null => "null",
+            JsonValue v => v.ToString(),
+            _ => value.ToJsonString(),
+        };
 
     private string StageTitle(string stageId) =>
         _stages?.FirstOrDefault(s => s.Id == stageId)?.Title ?? stageId;
