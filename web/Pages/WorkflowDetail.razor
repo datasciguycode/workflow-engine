@@ -43,6 +43,26 @@ else
         }
     </FluentStack>
 
+    <h2>Reference queue</h2>
+    @if (_queue.Count == 0)
+    {
+        <p style="opacity:0.7;">Nothing referenced yet -- items you create or act on in chat show up here, numbered, so you can say "number one" instead of describing it again.</p>
+    }
+    else
+    {
+        <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
+            @for (var i = 0; i < _queue.Count; i++)
+            {
+                var index = i;
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span><strong>@(index + 1).</strong> @_queue[index].Label</span>
+                    <FluentButton Appearance="ButtonAppearance.Transparent" @onclick="() => RemoveFromQueue(index)">X</FluentButton>
+                </div>
+            }
+        </FluentStack>
+        <FluentButton Appearance="ButtonAppearance.Outline" @onclick="ClearQueue">Clear queue</FluentButton>
+    }
+
     <h2>Chat</h2>
     <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
         @foreach (var line in _chatLog)
@@ -67,6 +87,13 @@ else
     private bool _sending;
     private JsonArray _messages = new();
     private readonly List<(string Who, string Text)> _chatLog = new();
+
+    // Reference queue (SPEC.md S6): items recently mentioned/created in this conversation, so
+    // the user can say "number one" instead of a name. UI-local state, not schema -- rebuilt
+    // here from each turn's tool_use/tool_result pairs, not stored server-side (the agent-loop
+    // function is stateless and only echoes the queue it's given back into its own prompt).
+    private const int QueueCap = 5;
+    private readonly List<(string ItemId, string Label)> _queue = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -103,15 +130,15 @@ else
         _chatLog.Add(("You", text));
         _sending = true;
 
+        var turnStart = _messages.Count;
         _messages.Add(new JsonObject { ["role"] = "user", ["content"] = text });
 
         try
         {
-            // Reference queue is UI-local state (SPEC.md S6); empty array for now until the
-            // queue UI itself is built.
-            var (reply, messages) = await Api.SendAgentMessageAsync(WorkflowId, new JsonArray(), _messages);
+            var (reply, messages) = await Api.SendAgentMessageAsync(WorkflowId, BuildQueueJson(), _messages);
             _messages = messages;
             _chatLog.Add(("Agent", reply));
+            UpdateQueueFromTurn(turnStart);
             _items = await Api.GetItemsAsync(WorkflowId);
         }
         catch (Exception ex)
@@ -121,6 +148,97 @@ else
         finally
         {
             _sending = false;
+        }
+    }
+
+    private JsonArray BuildQueueJson()
+    {
+        var arr = new JsonArray();
+        for (var i = 0; i < _queue.Count; i++)
+        {
+            arr.Add(new JsonObject
+            {
+                ["number"] = i + 1,
+                ["item_id"] = _queue[i].ItemId,
+                ["label"] = _queue[i].Label,
+            });
+        }
+        return arr;
+    }
+
+    private void RemoveFromQueue(int index) => _queue.RemoveAt(index);
+
+    private void ClearQueue() => _queue.Clear();
+
+    private void UpsertQueue(string itemId, string? label)
+    {
+        var idx = _queue.FindIndex(q => q.ItemId == itemId);
+        if (idx >= 0)
+        {
+            if (label is not null) _queue[idx] = (itemId, label);
+            return;
+        }
+        _queue.Add((itemId, label ?? itemId[..Math.Min(8, itemId.Length)]));
+        if (_queue.Count > QueueCap) _queue.RemoveAt(0);
+    }
+
+    private static string? FirstStringField(JsonNode? data)
+    {
+        if (data is JsonObject obj)
+        {
+            foreach (var (_, v) in obj)
+            {
+                if (v is JsonValue jv && jv.GetValueKind() == System.Text.Json.JsonValueKind.String)
+                    return jv.GetValue<string>();
+            }
+        }
+        return null;
+    }
+
+    // Scans the messages this turn added (from turnStart, the user message we just appended)
+    // for tool_use/tool_result pairs and folds each successful one into the queue. The server
+    // never echoes queue changes back -- it only reads the queue we send it -- so this is the
+    // only place the queue actually gets updated.
+    private void UpdateQueueFromTurn(int turnStart)
+    {
+        for (var i = turnStart; i < _messages.Count - 1; i++)
+        {
+            if (_messages[i] is not JsonObject msg) continue;
+            if (msg["role"]?.GetValue<string>() != "assistant") continue;
+            if (msg["content"] is not JsonArray blocks) continue;
+            if (_messages[i + 1] is not JsonObject resultMsg) continue;
+            if (resultMsg["content"] is not JsonArray resultBlocks) continue;
+
+            foreach (var block in blocks)
+            {
+                if (block is not JsonObject b || b["type"]?.GetValue<string>() != "tool_use") continue;
+                var toolUseId = b["id"]?.GetValue<string>();
+                var name = b["name"]?.GetValue<string>();
+                var input = b["input"] as JsonObject;
+
+                var resultBlock = resultBlocks.OfType<JsonObject>()
+                    .FirstOrDefault(r => r["tool_use_id"]?.GetValue<string>() == toolUseId);
+                if (resultBlock is null) continue;
+                if (resultBlock["is_error"]?.GetValue<bool>() == true) continue;
+
+                JsonNode? resultJson = null;
+                try
+                {
+                    var resultText = resultBlock["content"]?.GetValue<string>();
+                    if (resultText is not null) resultJson = JsonNode.Parse(resultText);
+                }
+                catch { /* non-JSON tool result -- nothing to add to the queue */ }
+
+                string? itemId = name switch
+                {
+                    "create_item" => resultJson?["id"]?.GetValue<string>(),
+                    "move_stage" or "update_data" or "add_note" => input?["item_id"]?.GetValue<string>(),
+                    _ => null,
+                };
+                var label = FirstStringField(resultJson?["data"]);
+
+                if (itemId is not null) UpsertQueue(itemId, label);
+            }
         }
     }
 }
