@@ -4,6 +4,9 @@
   padding: 0.5rem 1.5rem;
   width: 100%;
   min-height: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 #main-menu {

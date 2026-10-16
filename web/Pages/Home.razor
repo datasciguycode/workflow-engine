@@ -1,7 +1,50 @@
-﻿@page "/"
+@page "/"
+@inject WorkflowApiClient Api
+@inject NavigationManager Nav
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Workflows</PageTitle>
 
-<h1>Hello, world!</h1>
+<h1>Workflows</h1>
 
-Welcome to your new Fluent Blazor app.
+@if (_error is not null)
+{
+    <FluentMessageBar Intent="MessageBarIntent.Error">@_error</FluentMessageBar>
+}
+else if (_workflows is null)
+{
+    <FluentSpinner />
+}
+else if (_workflows.Count == 0)
+{
+    <p>No workflows found for this account.</p>
+}
+else
+{
+    <FluentStack Orientation="Orientation.Vertical" VerticalGap="8">
+        @foreach (var wf in _workflows)
+        {
+            <FluentCard @onclick="() => Open(wf.Id)" style="cursor:pointer; padding:16px;">
+                <h4 style="margin:0;">@wf.Name</h4>
+            </FluentCard>
+        }
+    </FluentStack>
+}
+
+@code {
+    private List<WorkflowSummary>? _workflows;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _workflows = await Api.GetWorkflowsAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Couldn't load workflows: {ex.Message}";
+        }
+    }
+
+    private void Open(string workflowId) => Nav.NavigateTo($"/workflow/{workflowId}");
+}

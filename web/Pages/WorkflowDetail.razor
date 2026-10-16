@@ -1,0 +1,103 @@
+@page "/workflow/{WorkflowId}"
+@using System.Text.Json.Nodes
+@inject WorkflowApiClient Api
+
+<PageTitle>Workflow</PageTitle>
+
+<FluentLink Href="/">&larr; Workflows</FluentLink>
+
+@if (_error is not null)
+{
+    <FluentMessageBar Intent="MessageBarIntent.Error">@_error</FluentMessageBar>
+}
+else if (_stages is null || _items is null)
+{
+    <FluentSpinner />
+}
+else
+{
+    <h1>Items</h1>
+    <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
+        @foreach (var item in _items)
+        {
+            <FluentCard style="padding:12px; max-width:100%; box-sizing:border-box;">
+                <div><strong>@StageTitle(item.StageId)</strong></div>
+                <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">@item.Data.ToJsonString()</div>
+            </FluentCard>
+        }
+        @if (_items.Count == 0)
+        {
+            <p>No items yet. Create one below.</p>
+        }
+    </FluentStack>
+
+    <h2>Chat</h2>
+    <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
+        @foreach (var line in _chatLog)
+        {
+            <div><strong>@line.Who:</strong> @line.Text</div>
+        }
+    </FluentStack>
+
+    <FluentTextArea @bind-Value="_draft" Placeholder="Create a job, move an item, add a note..." Rows="2" Style="width:100%;" />
+    <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@_sending" @onclick="Send">
+        @(_sending ? "Sending..." : "Send")
+    </FluentButton>
+}
+
+@code {
+    [Parameter] public string WorkflowId { get; set; } = "";
+
+    private List<StageSummary>? _stages;
+    private List<ItemSummary>? _items;
+    private string? _error;
+    private string _draft = "";
+    private bool _sending;
+    private JsonArray _messages = new();
+    private readonly List<(string Who, string Text)> _chatLog = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _stages = await Api.GetStagesAsync(WorkflowId);
+            _items = await Api.GetItemsAsync(WorkflowId);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Couldn't load workflow: {ex.Message}";
+        }
+    }
+
+    private string StageTitle(string stageId) =>
+        _stages?.FirstOrDefault(s => s.Id == stageId)?.Title ?? stageId;
+
+    private async Task Send()
+    {
+        if (string.IsNullOrWhiteSpace(_draft) || _sending) return;
+        var text = _draft;
+        _draft = "";
+        _chatLog.Add(("You", text));
+        _sending = true;
+
+        _messages.Add(new JsonObject { ["role"] = "user", ["content"] = text });
+
+        try
+        {
+            // Reference queue is UI-local state (SPEC.md S6); empty array for now until the
+            // queue UI itself is built.
+            var (reply, messages) = await Api.SendAgentMessageAsync(WorkflowId, new JsonArray(), _messages);
+            _messages = messages;
+            _chatLog.Add(("Agent", reply));
+            _items = await Api.GetItemsAsync(WorkflowId);
+        }
+        catch (Exception ex)
+        {
+            _chatLog.Add(("Error", ex.Message));
+        }
+        finally
+        {
+            _sending = false;
+        }
+    }
+}
