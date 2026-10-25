@@ -1,12 +1,113 @@
 @import url('/_content/Microsoft.FluentUI.AspNetCore.Components/css/reboot.css');
 
+:root {
+  --app-accent: #2b88d8;
+  --app-radius: 10px;
+}
+
+html, body {
+  margin: 0;
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
 .content {
-  padding: 0.5rem 1.5rem;
+  padding: 2.5rem 1.25rem 4rem;
   width: 100%;
   min-height: 100%;
-  max-width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
   overflow-x: hidden;
   box-sizing: border-box;
+}
+
+.content h1 {
+  margin: 4px 0 20px;
+  font-size: 1.7rem;
+  line-height: 1.25;
+}
+
+.content h2 {
+  margin: 28px 0 10px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  opacity: 0.75;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.content h2:first-of-type {
+  margin-top: 0;
+}
+
+.back-link {
+  color: var(--app-accent);
+  display: inline-block;
+  margin-bottom: 4px;
+}
+
+.clickable-card {
+  cursor: pointer;
+  transition: filter 0.1s ease-in-out;
+}
+
+.clickable-card:hover {
+  filter: brightness(1.08);
+}
+
+.clickable-card:active {
+  filter: brightness(0.94);
+}
+
+.current-badge {
+  display: inline-block;
+  background: var(--app-accent);
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.field-row {
+  margin-bottom: 6px;
+  line-height: 1.45;
+}
+
+.field-row .field-key {
+  opacity: 0.65;
+  font-size: 0.85rem;
+}
+
+.chat-line {
+  margin-bottom: 8px;
+  line-height: 1.45;
+}
+
+.theme-toggle {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0;
+  opacity: 0.55;
+  margin-bottom: 8px;
+}
+
+.theme-toggle:hover {
+  opacity: 1;
+}
+
+.theme-toggle-btn {
+  flex: 0 0 auto;
+  min-width: unset !important;
+  width: 32px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  font-size: 0.95rem !important;
+  line-height: 1 !important;
 }
 
 #main-menu {

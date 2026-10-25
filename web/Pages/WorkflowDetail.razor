@@ -1,10 +1,9 @@
 @page "/workflow/{WorkflowId}"
 @using System.Text.Json.Nodes
 @inject WorkflowApiClient Api
+@inject IJSRuntime JS
 
 <PageTitle>Workflow</PageTitle>
-
-<FluentLink Href="/">&larr; Workflows</FluentLink>
 
 @if (_error is not null)
 {
@@ -16,62 +15,86 @@ else if (_stages is null || _items is null)
 }
 else
 {
-    <h1>Items</h1>
-    <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
-        @foreach (var item in _items)
-        {
-            <FluentCard style="padding:12px; max-width:100%; box-sizing:border-box;">
-                <div><strong>@StageTitle(item.StageId)</strong></div>
-                @if (item.Data.Count == 0)
-                {
-                    <div style="opacity:0.7;">(no data)</div>
-                }
-                else
-                {
-                    @foreach (var (key, value) in item.Data)
-                    {
-                        <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                            <span style="opacity:0.7;">@key:</span> @FieldText(value)
-                        </div>
-                    }
-                }
-            </FluentCard>
-        }
-        @if (_items.Count == 0)
-        {
-            <p>No items yet. Create one below.</p>
-        }
-    </FluentStack>
+    <div style="text-align:center;">
+        <FluentButton Appearance="ButtonAppearance.Primary" @onclick="FocusChatInput">
+            &#127908; Talk
+        </FluentButton>
+    </div>
 
-    <h2>Reference queue</h2>
-    @if (_queue.Count == 0)
+    @if (_selectedStageId is not null && _selectedItem is not null)
     {
-        <p style="opacity:0.7;">Nothing referenced yet -- items you create or act on in chat show up here, numbered, so you can say "number one" instead of describing it again.</p>
+        <FluentLink @onclick="BackToItem" Class="back-link" Style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">&larr; @ItemTitle(_selectedItem)</FluentLink>
+        <h1 style="overflow-wrap:anywhere; word-break:break-word;">@StageTitle(_selectedStageId)</h1>
+        @foreach (var (key, value) in ItemFieldsForStage(_selectedItem, _selectedStageId))
+        {
+            <div class="field-row" style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
+                <span class="field-key">@key:</span> @FieldText(value)
+            </div>
+        }
+    }
+    else if (_selectedItem is not null)
+    {
+        <FluentLink @onclick="BackToList" Class="back-link">&larr; @ItemLabelPlural</FluentLink>
+        <h1 style="overflow-wrap:anywhere; word-break:break-word;">@ItemTitle(_selectedItem)</h1>
+        <h2>Stages</h2>
+        <FluentStack Orientation="Orientation.Vertical" VerticalGap="6">
+            @foreach (var stage in _stages.OrderBy(s => s.SequenceOrder ?? int.MaxValue))
+            {
+                var isCurrent = stage.Id == _selectedItem.StageId;
+                <FluentCard Class="clickable-card" style="@($"padding:10px 14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius); {(isCurrent ? "border: 2px solid var(--app-accent);" : "")}")"
+                            @onclick="() => SelectStage(stage.Id)">
+                    @Capitalize(stage.Title) @if (isCurrent) { <span class="current-badge">current</span> }
+                </FluentCard>
+            }
+        </FluentStack>
     }
     else
     {
-        <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
-            @for (var i = 0; i < _queue.Count; i++)
+        <FluentLink Href="/" Class="back-link">&larr; Workflows</FluentLink>
+        <h1>@ItemLabelPlural</h1>
+        <FluentStack Orientation="Orientation.Vertical" VerticalGap="8">
+            @for (var i = 0; i < _items.Count; i++)
             {
-                var index = i;
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <span><strong>@(index + 1).</strong> @_queue[index].Label</span>
-                    <FluentButton Appearance="ButtonAppearance.Transparent" @onclick="() => RemoveFromQueue(index)">X</FluentButton>
+                var item = _items[i];
+                var number = i + 1;
+                <FluentCard Class="clickable-card" style="padding:14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius);" @onclick="() => SelectItem(item)">
+                    <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
+                        <strong>@number. @ItemTitle(item)</strong>
+                    </div>
+                    <div style="opacity:0.7; margin-top:2px;">Stage: @StageTitle(item.StageId)</div>
+                </FluentCard>
+            }
+            @if (_items.Count == 0)
+            {
+                <p>No @ItemLabelPlural.ToLowerInvariant() yet. Create one below.</p>
+            }
+        </FluentStack>
+    }
+
+    @if (_selectedStageId is null && _selectedItem is not null)
+    {
+        <h2>Details</h2>
+        <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
+            @foreach (var (key, value) in ItemFields(_selectedItem))
+            {
+                <div class="field-row" style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
+                    <span class="field-key">@key:</span> @FieldText(value)
                 </div>
             }
         </FluentStack>
-        <FluentButton Appearance="ButtonAppearance.Outline" @onclick="ClearQueue">Clear queue</FluentButton>
     }
 
     <h2>Chat</h2>
     <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
-        @foreach (var line in _chatLog)
+        @foreach (var line in CurrentChatLog())
         {
-            <div><strong>@line.Who:</strong> @line.Text</div>
+            <div class="chat-line" style="max-width:100%; box-sizing:border-box; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
+                <strong>@line.Who:</strong> @line.Text
+            </div>
         }
     </FluentStack>
 
-    <FluentTextArea @bind-Value="_draft" Placeholder="Create a job, move an item, add a note..." Rows="2" Style="width:100%;" />
+    <FluentTextArea id="chat-input" @bind-Value="_draft" Placeholder="Create a job, move an item, add a note..." Rows="2" Style="width:100%;" Autofocus="true" />
     <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@_sending" @onclick="Send">
         @(_sending ? "Sending..." : "Send")
     </FluentButton>
@@ -80,27 +103,45 @@ else
 @code {
     [Parameter] public string WorkflowId { get; set; } = "";
 
+    private WorkflowSummary? _workflow;
     private List<StageSummary>? _stages;
     private List<ItemSummary>? _items;
     private string? _error;
+
+    // Drill-down state: null/null = Jobs list; item set, stage null = job detail (stages);
+    // both set = stage view. 2026-10-21: there is no structured event log anywhere in this UI
+    // any more (tried a per-stage Log, then a flat Activity log -- both just showed computer-ish
+    // "Moved to X" noise, including entries from stage moves nobody actually narrated). The chat
+    // itself is now the only record, scoped per view via CurrentChatLog() below: each chat line is
+    // tagged with the item/stage that was selected when it was sent, so drilling into a stage
+    // shows only the conversation that happened there, not a separate structured history.
+    private ItemSummary? _selectedItem;
+    private string? _selectedStageId;
+
+    private string ItemLabelSingular =>
+        string.IsNullOrEmpty(_workflow?.ItemLabel) ? "Item" :
+        char.ToUpperInvariant(_workflow.ItemLabel[0]) + _workflow.ItemLabel[1..];
+    private string ItemLabelPlural => ItemLabelSingular + "s";
     private string _draft = "";
     private bool _sending;
     private JsonArray _messages = new();
-    private readonly List<(string Who, string Text)> _chatLog = new();
-
-    // Reference queue (SPEC.md S6): items recently mentioned/created in this conversation, so
-    // the user can say "number one" instead of a name. UI-local state, not schema -- rebuilt
-    // here from each turn's tool_use/tool_result pairs, not stored server-side (the agent-loop
-    // function is stateless and only echoes the queue it's given back into its own prompt).
-    private const int QueueCap = 5;
-    private readonly List<(string ItemId, string Label)> _queue = new();
+    private readonly List<(string Who, string Text, string? ItemId, string? StageId)> _chatLog = new();
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
+            _workflow = await Api.GetWorkflowAsync(WorkflowId);
             _stages = await Api.GetStagesAsync(WorkflowId);
             _items = await Api.GetItemsAsync(WorkflowId);
+
+            // Chat is the only record (2026-10-21 redesign) and must survive a page reload --
+            // caught 2026-10-23: _chatLog used to live only in this component's memory, so
+            // reloading the page silently wiped every conversation. Reload it from storage here
+            // the same way it's written in Send() below.
+            var history = await Api.GetChatMessagesAsync(WorkflowId);
+            foreach (var m in history)
+                _chatLog.Add((DisplayWho(m.Who), m.Body, m.ItemId, m.StageId));
         }
         catch (Exception ex)
         {
@@ -108,9 +149,22 @@ else
         }
     }
 
-    // data is domain-agnostic jsonb -- no field names can be assumed here (a mechanic
-    // workflow's "vehicle" means nothing to the SDLC workflow's "feature title"), so this
-    // renders scalars plainly and falls back to compact JSON only for nested objects/arrays.
+    private static string DisplayWho(string who) => who switch
+    {
+        "user" => "You",
+        "agent" => "Agent",
+        "error" => "Error",
+        _ => who,
+    };
+
+    private static string StoredWho(string displayWho) => displayWho switch
+    {
+        "You" => "user",
+        "Agent" => "agent",
+        "Error" => "error",
+        _ => displayWho,
+    };
+
     private static string FieldText(JsonNode? value) =>
         value switch
         {
@@ -119,31 +173,153 @@ else
             _ => value.ToJsonString(),
         };
 
-    private string StageTitle(string stageId) =>
-        _stages?.FirstOrDefault(s => s.Id == stageId)?.Title ?? stageId;
+    private string ItemTitle(ItemSummary item)
+    {
+        var key = TitleKey(item);
+        if (key is not null && item.Data[key] is JsonValue jv) return jv.GetValue<string>();
+        return $"{ItemLabelPlural.TrimEnd('s')} {item.Id[..Math.Min(8, item.Id.Length)]}";
+    }
+
+    // No field names can be assumed in general (data is domain-agnostic jsonb), but a field
+    // literally named "title" is a real convention the agent itself already uses when it creates
+    // an item ("I'll create a new item titled...") -- prefer that key if present, since object
+    // key order isn't guaranteed and picking "the first string field" broke once a job had more
+    // than one text field (e.g. title + address + phone -- whichever came first in iteration
+    // order "won," not necessarily the actual title). Falls back to the old first-string-field
+    // guess only when no "title" key exists.
+    private static string? TitleKey(ItemSummary item)
+    {
+        if (item.Data.Any(kv => string.Equals(kv.Key, "title", StringComparison.OrdinalIgnoreCase)))
+            return item.Data.First(kv => string.Equals(kv.Key, "title", StringComparison.OrdinalIgnoreCase)).Key;
+
+        foreach (var (k, v) in item.Data)
+        {
+            if (v is JsonValue jv && jv.GetValueKind() == System.Text.Json.JsonValueKind.String)
+                return k;
+        }
+        return null;
+    }
+
+    // Every data field except the title (already shown as the heading) -- shown only in a stage
+    // view, not on the Jobs list (2026-10-25: showing every field on the list card got cluttered
+    // as jobs picked up more fields; the list now stays to title + current stage, full detail
+    // lives one level down).
+    private static IEnumerable<KeyValuePair<string, JsonNode?>> ItemFields(ItemSummary item)
+    {
+        var titleKey = TitleKey(item);
+        return item.Data.Where(kv => kv.Key != titleKey);
+    }
+
+    // Which stage each field was last written at -- key: stage_id, rebuilt from this item's
+    // event history whenever a stage is selected. A null value means the field's origin stage is
+    // unknown (e.g. an item created before 2026-10-20's create_item fix, which never recorded
+    // stage_id) -- such a field won't show in ANY stage view, only pre-stage-filter data would
+    // have shown it, which is an acceptable gap for old test data.
+    private readonly Dictionary<string, string?> _fieldStage = new();
+
+    private async Task LoadFieldStageMap(string itemId)
+    {
+        _fieldStage.Clear();
+        var events = await Api.GetItemEventsAsync(itemId);
+        foreach (var e in events)
+        {
+            if (e.Data is null) continue;
+            foreach (var (key, value) in e.Data)
+            {
+                if (e.EventType == "item.data_changed" && value is null)
+                    _fieldStage.Remove(key);
+                else if (e.EventType is "item.created" or "item.data_changed")
+                    _fieldStage[key] = e.StageId;
+            }
+        }
+    }
+
+    // Only the fields whose last-written stage matches the one being viewed (2026-10-25: user
+    // wanted the Intake stage view to show intake-time fields only, not a scheduling field that
+    // was set later while the job sat at Scheduling).
+    private IEnumerable<KeyValuePair<string, JsonNode?>> ItemFieldsForStage(ItemSummary item, string? stageId) =>
+        ItemFields(item).Where(kv => _fieldStage.TryGetValue(kv.Key, out var s) && s == stageId);
+
+    private string StageTitle(string? stageId) =>
+        Capitalize(_stages?.FirstOrDefault(s => s.Id == stageId)?.Title ?? stageId ?? "");
+
+    // Display-only -- stage titles are stored lowercase (some with underscores, e.g.
+    // payment_receipt_submitted), so this just capitalizes the first letter rather than
+    // rewriting the whole string.
+    private static string Capitalize(string s) =>
+        string.IsNullOrEmpty(s) ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
+    private void SelectItem(ItemSummary item)
+    {
+        _selectedItem = item;
+        _selectedStageId = null;
+    }
+
+    private async Task SelectStage(string stageId)
+    {
+        _selectedStageId = stageId;
+        await LoadFieldStageMap(_selectedItem!.Id);
+    }
+
+    private void BackToItem() => _selectedStageId = null;
+
+    private void BackToList()
+    {
+        _selectedItem = null;
+        _selectedStageId = null;
+    }
+
+    // Chat lines are tagged with whatever was selected when they were sent -- drilled into a
+    // stage, a job with no stage selected, or neither (the Jobs list). A stage view shows its own
+    // stage-tagged lines PLUS the job's general (no-stage) lines -- e.g. the job-creation
+    // conversation, which necessarily happens before any stage view exists to tag it with, still
+    // needs to show up once you're looking at the job's current stage (2026-10-21: it didn't,
+    // which read as "the chat for the current stage is empty" even though the job clearly had a
+    // conversation behind it). The job-level view (item selected, no stage) stays untouched by
+    // this -- it shows only its own no-stage lines, not every stage's lines layered in.
+    private IEnumerable<(string Who, string Text, string? ItemId, string? StageId)> CurrentChatLog() =>
+        _chatLog.Where(l => l.ItemId == _selectedItem?.Id &&
+            (l.StageId == _selectedStageId || (_selectedStageId is not null && l.StageId is null)));
+
+    // iOS Safari only opens the keyboard (and its dictation mic icon) from a focus() call made
+    // synchronously inside a real tap handler -- autofocus and any focus triggered by page
+    // load/render are silently ignored (2026-10-25). This button's own tap is that gesture.
+    private Task FocusChatInput() => JS.InvokeVoidAsync("focusChatInput").AsTask();
 
     private async Task Send()
     {
         if (string.IsNullOrWhiteSpace(_draft) || _sending) return;
         var text = _draft;
         _draft = "";
-        _chatLog.Add(("You", text));
+        var itemId = _selectedItem?.Id;
+        var stageId = _selectedStageId;
+        _chatLog.Add(("You", text, itemId, stageId));
         _sending = true;
+        await Api.AddChatMessageAsync(WorkflowId, StoredWho("You"), text, itemId, stageId);
 
-        var turnStart = _messages.Count;
         _messages.Add(new JsonObject { ["role"] = "user", ["content"] = text });
 
         try
         {
-            var (reply, messages) = await Api.SendAgentMessageAsync(WorkflowId, BuildQueueJson(), _messages);
+            var (reply, messages) = await Api.SendAgentMessageAsync(
+                WorkflowId, BuildQueueJson(), _messages,
+                selectedItemId: _selectedItem?.Id,
+                selectedItemLabel: _selectedItem is null ? null : ItemTitle(_selectedItem),
+                selectedStageTitle: _selectedStageId is not null ? StageTitle(_selectedStageId)
+                    : _selectedItem is not null ? StageTitle(_selectedItem.StageId) : null);
             _messages = messages;
-            _chatLog.Add(("Agent", reply));
-            UpdateQueueFromTurn(turnStart);
+            _chatLog.Add(("Agent", reply, itemId, stageId));
+            await Api.AddChatMessageAsync(WorkflowId, StoredWho("Agent"), reply, itemId, stageId);
             _items = await Api.GetItemsAsync(WorkflowId);
+            if (_selectedItem is not null)
+                _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
+            if (_selectedItem is not null && _selectedStageId is not null)
+                await LoadFieldStageMap(_selectedItem.Id);
         }
         catch (Exception ex)
         {
-            _chatLog.Add(("Error", ex.Message));
+            _chatLog.Add(("Error", ex.Message, itemId, stageId));
+            await Api.AddChatMessageAsync(WorkflowId, StoredWho("Error"), ex.Message, itemId, stageId);
         }
         finally
         {
@@ -151,94 +327,24 @@ else
         }
     }
 
+    // The agent's "queue" of nameable references is just the Jobs list itself, numbered by its
+    // current display order (most-recently-updated first, from GetItemsAsync) -- replaces the
+    // separately tracked reference-queue list built earlier the same day (2026-10-16 redesign:
+    // "number one" means position 1 in the one list that's already on screen, nothing separate
+    // to maintain).
     private JsonArray BuildQueueJson()
     {
         var arr = new JsonArray();
-        for (var i = 0; i < _queue.Count; i++)
+        if (_items is null) return arr;
+        for (var i = 0; i < _items.Count; i++)
         {
             arr.Add(new JsonObject
             {
                 ["number"] = i + 1,
-                ["item_id"] = _queue[i].ItemId,
-                ["label"] = _queue[i].Label,
+                ["item_id"] = _items[i].Id,
+                ["label"] = ItemTitle(_items[i]),
             });
         }
         return arr;
-    }
-
-    private void RemoveFromQueue(int index) => _queue.RemoveAt(index);
-
-    private void ClearQueue() => _queue.Clear();
-
-    private void UpsertQueue(string itemId, string? label)
-    {
-        var idx = _queue.FindIndex(q => q.ItemId == itemId);
-        if (idx >= 0)
-        {
-            if (label is not null) _queue[idx] = (itemId, label);
-            return;
-        }
-        _queue.Add((itemId, label ?? itemId[..Math.Min(8, itemId.Length)]));
-        if (_queue.Count > QueueCap) _queue.RemoveAt(0);
-    }
-
-    private static string? FirstStringField(JsonNode? data)
-    {
-        if (data is JsonObject obj)
-        {
-            foreach (var (_, v) in obj)
-            {
-                if (v is JsonValue jv && jv.GetValueKind() == System.Text.Json.JsonValueKind.String)
-                    return jv.GetValue<string>();
-            }
-        }
-        return null;
-    }
-
-    // Scans the messages this turn added (from turnStart, the user message we just appended)
-    // for tool_use/tool_result pairs and folds each successful one into the queue. The server
-    // never echoes queue changes back -- it only reads the queue we send it -- so this is the
-    // only place the queue actually gets updated.
-    private void UpdateQueueFromTurn(int turnStart)
-    {
-        for (var i = turnStart; i < _messages.Count - 1; i++)
-        {
-            if (_messages[i] is not JsonObject msg) continue;
-            if (msg["role"]?.GetValue<string>() != "assistant") continue;
-            if (msg["content"] is not JsonArray blocks) continue;
-            if (_messages[i + 1] is not JsonObject resultMsg) continue;
-            if (resultMsg["content"] is not JsonArray resultBlocks) continue;
-
-            foreach (var block in blocks)
-            {
-                if (block is not JsonObject b || b["type"]?.GetValue<string>() != "tool_use") continue;
-                var toolUseId = b["id"]?.GetValue<string>();
-                var name = b["name"]?.GetValue<string>();
-                var input = b["input"] as JsonObject;
-
-                var resultBlock = resultBlocks.OfType<JsonObject>()
-                    .FirstOrDefault(r => r["tool_use_id"]?.GetValue<string>() == toolUseId);
-                if (resultBlock is null) continue;
-                if (resultBlock["is_error"]?.GetValue<bool>() == true) continue;
-
-                JsonNode? resultJson = null;
-                try
-                {
-                    var resultText = resultBlock["content"]?.GetValue<string>();
-                    if (resultText is not null) resultJson = JsonNode.Parse(resultText);
-                }
-                catch { /* non-JSON tool result -- nothing to add to the queue */ }
-
-                string? itemId = name switch
-                {
-                    "create_item" => resultJson?["id"]?.GetValue<string>(),
-                    "move_stage" or "update_data" or "add_note" => input?["item_id"]?.GetValue<string>(),
-                    _ => null,
-                };
-                var label = FirstStringField(resultJson?["data"]);
-
-                if (itemId is not null) UpsertQueue(itemId, label);
-            }
-        }
     }
 }

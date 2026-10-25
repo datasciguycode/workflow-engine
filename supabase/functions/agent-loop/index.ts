@@ -8,15 +8,16 @@
 // supabase/migrations/*.sql, but never actually invoked. Treat it as a reviewed draft, not a
 // proven one, until it's run for real with `supabase functions serve` + a real API key.
 //
-// Design (confirm-before-write, carried over from contractor-tracker's 2026-09-21 decision):
-// rather than building a custom two-phase tool-interception protocol, the system prompt below
-// just instructs Claude to always describe the action and wait for an explicit "yes" in the
-// conversation BEFORE calling any tool. The actual RPC call only happens once Claude itself
-// decides to invoke the tool, which (per the prompt) only happens after confirmation. This is
-// deliberately simple: no separate "proposed action" state machine in this code, just a normal
-// multi-turn Messages API conversation. The caller (client) holds the full message history
-// client-side and sends it back each call -- this function is stateless, same as the
-// reference queue is UI-local state, not server state (SPEC.md §6).
+// Design: no custom two-phase tool-interception protocol -- Claude just calls tools directly as
+// instructions come in, via a normal multi-turn Messages API conversation. The caller (client)
+// holds the full message history client-side and sends it back each call -- this function is
+// stateless, same as the reference queue is UI-local state, not server state (SPEC.md §6).
+// Originally (2026-10-13, carried over from contractor-tracker's 2026-09-21 decision) this used a
+// confirm-before-write pattern -- describe the action in plain text and wait for an explicit "yes"
+// before calling any tool. Dropped 2026-10-21: the user's own message is already visible in the
+// chat UI, so a separate restate-and-confirm round trip was pure friction, not a real safety
+// check (nothing here is destructive enough to warrant it, and a wrong move is just another chat
+// message away from being corrected).
 
 import Anthropic from "npm:@anthropic-ai/sdk@0.32.1";
 
@@ -31,6 +32,13 @@ type RequestBody = {
   workflow_id: string;
   queue: QueueEntry[];
   messages: Anthropic.MessageParam[]; // full prior history; first call has one user message
+  // The job/stage currently drilled into in the UI, if any -- lets the agent default an
+  // ambiguous message ("appointment tomorrow at 3") to the job the user is actually looking at
+  // instead of always asking "which job?" (2026-10-20: queue-only disambiguation asked even when
+  // the user was clearly mid-conversation about one specific job on screen).
+  selected_item_id?: string;
+  selected_item_label?: string;
+  selected_stage_title?: string;
 };
 
 // Thin wrapper around PostgREST, forwarding the CALLER's own JWT (not the service role key) so
@@ -69,13 +77,21 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "create_item",
     description:
-      "Create a new item in the active workflow. It lands automatically in the workflow's is_initial stage.",
+      "Create a new item in the active workflow. It lands automatically in the workflow's is_initial stage. " +
+      "The UI displays data.title as the item's heading, so always compose it yourself as " +
+      "\"{customer} - {short task}\" (a few words, not the full sentence) -- e.g. a request of " +
+      "\"Bob's cat needs to be removed from the car\" becomes title \"Bob - cat removal\". Never copy the " +
+      "raw request/complaint text verbatim into title. Put the actual task description, complaint, or " +
+      "request in its own field (e.g. data.description), separate from title. If you don't yet have a " +
+      "customer name to anchor the title on, ask for one before creating the item rather than guessing.",
     input_schema: {
       type: "object",
       properties: {
         data: {
           type: "object",
-          description: "Initial free-form fields for the item, e.g. {customer, vehicle} or {title}.",
+          description:
+            "Initial free-form fields for the item, e.g. {title: \"Bob - cat removal\", customer: \"Bob\", " +
+            "phone: \"999-999-9999\", description: \"Cat needs to be removed from the car\"}.",
         },
       },
       required: ["data"],
@@ -153,18 +169,29 @@ async function callTool(
   }
 }
 
-function systemPrompt(stages: unknown, queue: QueueEntry[]) {
+function systemPrompt(
+  stages: unknown,
+  queue: QueueEntry[],
+  selectedItemId?: string,
+  selectedItemLabel?: string,
+  selectedStageTitle?: string,
+) {
+  const selectedContext = selectedItemId
+    ? `\nThe user currently has this job open in the UI: "${selectedItemLabel ?? selectedItemId}" (id ${selectedItemId}), viewing its "${selectedStageTitle ?? "unknown"}" stage. Default to this job for any message that doesn't clearly name a different one -- the user is looking at it, so don't ask "which job?" just because other jobs also exist in the queue below. Only ask for clarification if the message itself points elsewhere (e.g. names a different customer/vehicle) or there's no job open at all.\n`
+    : "";
   return `You are a workflow assistant for a mechanic-shop / task-tracking app. You act on the user's spoken-or-typed instructions using the tools available to you.
 
 Active workflow's stages (id, title, sequence_order, is_initial, is_terminal):
 ${JSON.stringify(stages)}
-
+${selectedContext}
 Reference queue -- items recently mentioned or created in this conversation, numbered by order of mention (the user may say "number one", "the second one", etc. instead of a name):
 ${JSON.stringify(queue)}
 
 Rules:
 - The user may refer to an item by its queue number, or by a descriptive name/detail (e.g. "the Civic").
-- CRITICAL: before calling any tool, state in plain text exactly what you are about to do (plain language, not raw tool syntax) and wait for the user's explicit go-ahead. Only call a tool after the user's most recent message clearly confirms (e.g. "yes", "do it", "go ahead"). If they decline or say no, acknowledge in plain text and do not call any tool.
+- When a message reads like a task or request (e.g. "Fix Bob's engine," "Replace the brake pads"), default to treating it as the job's own description -- something to track, not an instruction for you to carry out yourself. Only treat it as a literal instruction to you when it's clearly addressed to you as the assistant (e.g. "move this to diagnosis," "add a note that..."). If genuinely ambiguous, ask which one they mean before proposing a tool call -- but first check whether the job currently open in the UI (above, if any) already resolves the ambiguity.
+- When creating a job from a request like that, don't use the raw request text as the title -- see create_item's description for how to split title vs. description.
+- Act immediately -- the user's message is already visible on screen, so there's no need to restate what you're about to do and wait for a separate "yes" before calling a tool. Call the tool as soon as the instruction (or job-creation/move request) is clear; only ask first if it's genuinely ambiguous which item or stage is meant (see above).
 - After a tool call succeeds, reply with a short acknowledgment only (e.g. "Saved."). Do not read back the data you just wrote.
 - If a tool call fails (e.g. a rejected stage move), explain briefly in plain text what went wrong. Don't retry automatically.
 - Keep replies short -- this is a voice interface; the user is hearing this read aloud, not reading it.`;
@@ -217,13 +244,33 @@ Deno.serve(async (req) => {
   let finalText = "";
   try {
   for (let turn = 0; turn < 6; turn++) {
-    const response = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 1024,
-      system: systemPrompt(stages, queue),
-      tools: TOOLS,
-      messages,
-    });
+    // system is rebuilt every request from the current stages/queue, which changes across
+    // chat turns as jobs are created/moved -- so thinking blocks from an earlier request are
+    // routinely invalidated by the time the client sends its next message (the system prompt
+    // "prefix" they were bound to no longer matches). block_binding.prefix_mismatch_behavior:
+    // "drop_block" tells the API to drop stale thinking blocks and regenerate them instead of
+    // hard-erroring (matches thinking-binding-controls-2026-08-01 beta semantics). This is a
+    // documented stopgap, not a full fix -- the real fix would keep system/tools stable across
+    // requests and push updates via mid-conversation role:"system" messages instead, which is a
+    // bigger refactor than warranted for this local-dev UI pattern.
+    const response = await anthropic.messages.create(
+      {
+        model: MODEL,
+        max_tokens: 1024,
+        system: systemPrompt(
+          stages,
+          queue,
+          body.selected_item_id,
+          body.selected_item_label,
+          body.selected_stage_title,
+        ),
+        tools: TOOLS,
+        thinking: { type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } },
+        messages,
+        // deno-lint-ignore no-explicit-any
+      } as any,
+      { headers: { "anthropic-beta": "thinking-binding-controls-2026-08-01" } },
+    );
 
     messages.push({ role: "assistant", content: response.content });
 

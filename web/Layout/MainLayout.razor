@@ -1,5 +1,25 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
+@inject IThemeService ThemeService
 
 <div class="content">
+    <div class="theme-toggle">
+        <FluentButton Class="theme-toggle-btn" Appearance="ButtonAppearance.Transparent" Title="Light mode" @onclick="() => SetMode(ThemeMode.Light)">&#9728;</FluentButton>
+        <FluentButton Class="theme-toggle-btn" Appearance="ButtonAppearance.Transparent" Title="Dark mode" @onclick="() => SetMode(ThemeMode.Dark)">&#9789;</FluentButton>
+    </div>
+
     @Body
 </div>
+
+@code {
+    // v5's theming API is IThemeService, not the old FluentDesignTheme component (that's v4) --
+    // confirmed from the installed package's own XML docs before writing this (2026-10-25).
+    // System is the real, explicit default (not just an implicit fallback) so both light and dark
+    // are genuinely supported and switchable, not just whatever the browser happened to inherit.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await ThemeService.SetThemeAsync(ThemeMode.System);
+    }
+
+    private async Task SetMode(ThemeMode mode) => await ThemeService.SetThemeAsync(mode);
+}

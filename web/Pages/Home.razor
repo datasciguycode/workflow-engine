@@ -23,7 +23,7 @@ else
     <FluentStack Orientation="Orientation.Vertical" VerticalGap="8">
         @foreach (var wf in _workflows)
         {
-            <FluentCard @onclick="() => Open(wf.Id)" style="cursor:pointer; padding:16px;">
+            <FluentCard Class="clickable-card" @onclick="() => Open(wf.Id)" style="padding:16px; border-radius:var(--app-radius);">
                 <h4 style="margin:0;">@wf.Name</h4>
             </FluentCard>
         }
