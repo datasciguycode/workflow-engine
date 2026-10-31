@@ -4,11 +4,16 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- No-cache during active dev/phone-testing (2026-10-31): Safari was serving a stale
+         cached copy of this page itself, so CSS edits never showed up even after reload. -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>WorkflowApp.Web</title>
     <base href="/" />
     <link rel="preload" id="webassembly" />
     <link href="_content/Microsoft.FluentUI.AspNetCore.Components/css/reboot.css" rel="stylesheet" />
-    <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="css/app.css?v=20261031c" />
     <!-- If you add any scoped CSS files, uncomment the following to load them
     <link href="WorkflowApp.Web.styles.css" rel="stylesheet" /> -->
     <link href="manifest.webmanifest" rel="manifest" />
@@ -33,7 +38,11 @@
     </div>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
     <script src="js/focus.js"></script>
-    <script>navigator.serviceWorker.register('service-worker.js', { updateViaCache: 'none' });</script>
+    <!-- Service worker registration disabled during active dev/phone-testing (2026-10-30):
+         iOS Safari was caching stale builds behind it, hiding real UI changes after every
+         rebuild. service-worker.js itself is untouched -- re-enable this line before the real
+         production deploy, when offline PWA support actually matters. -->
+    <!-- <script>navigator.serviceWorker.register('service-worker.js', { updateViaCache: 'none' });</script> -->
 </body>
 
 </html>

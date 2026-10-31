@@ -1,0 +1,25 @@
+@inject IThemeService ThemeService
+@inject ThemeState State
+
+<FluentButton Class="theme-toggle-btn" Appearance="ButtonAppearance.Transparent"
+              Title="@(State.IsDark ? "Switch to light mode" : "Switch to dark mode")"
+              @onclick="ToggleMode">
+    @(State.IsDark ? "☽" : "☀️")
+</FluentButton>
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !State.Initialized)
+        {
+            State.Initialized = true;
+            await ThemeService.SetThemeAsync(ThemeMode.System);
+        }
+    }
+
+    private async Task ToggleMode()
+    {
+        State.IsDark = !State.IsDark;
+        await ThemeService.SetThemeAsync(State.IsDark ? ThemeMode.Dark : ThemeMode.Light);
+    }
+}

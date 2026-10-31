@@ -15,15 +15,33 @@ else if (_stages is null || _items is null)
 }
 else
 {
-    <div style="text-align:center;">
-        <FluentButton Appearance="ButtonAppearance.Primary" @onclick="FocusChatInput">
-            &#127908; Talk
-        </FluentButton>
+    <div class="page-header">
+        <div class="page-header-back">
+            @if (_selectedStageId is not null && _selectedItem is not null)
+            {
+                <FluentLink @onclick="BackToItem" Class="back-link" Style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">&larr; @ItemTitle(_selectedItem)</FluentLink>
+            }
+            else if (_selectedItem is not null)
+            {
+                <FluentLink @onclick="BackToList" Class="back-link">&larr; @ItemLabelPlural</FluentLink>
+            }
+            else
+            {
+                <FluentLink Href="/" Class="back-link">&larr; Workflows</FluentLink>
+            }
+        </div>
+        <div class="page-header-chat">
+            <FluentButton Appearance="ButtonAppearance.Primary" @onclick="FocusChatInput">
+                &#128172; Chat
+            </FluentButton>
+        </div>
+        <div class="page-header-toggle">
+            <ThemeToggleButton />
+        </div>
     </div>
 
     @if (_selectedStageId is not null && _selectedItem is not null)
     {
-        <FluentLink @onclick="BackToItem" Class="back-link" Style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">&larr; @ItemTitle(_selectedItem)</FluentLink>
         <h1 style="overflow-wrap:anywhere; word-break:break-word;">@StageTitle(_selectedStageId)</h1>
         @foreach (var (key, value) in ItemFieldsForStage(_selectedItem, _selectedStageId))
         {
@@ -34,7 +52,6 @@ else
     }
     else if (_selectedItem is not null)
     {
-        <FluentLink @onclick="BackToList" Class="back-link">&larr; @ItemLabelPlural</FluentLink>
         <h1 style="overflow-wrap:anywhere; word-break:break-word;">@ItemTitle(_selectedItem)</h1>
         <h2>Stages</h2>
         <FluentStack Orientation="Orientation.Vertical" VerticalGap="6">
@@ -50,7 +67,6 @@ else
     }
     else
     {
-        <FluentLink Href="/" Class="back-link">&larr; Workflows</FluentLink>
         <h1>@ItemLabelPlural</h1>
         <FluentStack Orientation="Orientation.Vertical" VerticalGap="8">
             @for (var i = 0; i < _items.Count; i++)
@@ -94,7 +110,10 @@ else
         }
     </FluentStack>
 
-    <FluentTextArea id="chat-input" @bind-Value="_draft" Placeholder="Create a job, move an item, add a note..." Rows="2" Style="width:100%;" Autofocus="true" />
+    @* Autofocus removed 2026-10-30: doesn't open iOS's keyboard anyway (confirmed 2026-10-25),
+       but Safari still scroll-jumps the page to bring this box into view on every load, hiding
+       the Talk button and back-link above it. The Talk button is the real focus mechanism now. *@
+    <FluentTextArea id="chat-input" @bind-Value="_draft" Placeholder="Create a job, move an item, add a note..." Rows="2" Style="width:100%;" />
     <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@_sending" @onclick="Send">
         @(_sending ? "Sending..." : "Send")
     </FluentButton>
