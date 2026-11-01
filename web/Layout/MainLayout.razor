@@ -1,5 +1,29 @@
 @inherits LayoutComponentBase
+@inject AuthState Auth
 
-<div class="content">
-    @Body
-</div>
+@if (!Auth.IsReady)
+{
+    <div class="auth-gate"><FluentSpinner /></div>
+}
+else if (!Auth.IsSignedIn)
+{
+    <div class="auth-gate">
+        <h1>Workflow App</h1>
+        <FluentButton Appearance="ButtonAppearance.Primary" @onclick="Auth.SignInWithGoogle">
+            Sign in with Google
+        </FluentButton>
+    </div>
+}
+else
+{
+    <div class="content">
+        @Body
+    </div>
+}
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        await Auth.InitializeAsync();
+    }
+}

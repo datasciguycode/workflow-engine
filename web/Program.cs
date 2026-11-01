@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.FluentUI.AspNetCore.Components;
 using WorkflowApp.Web;
 using WorkflowApp.Web.Services;
@@ -9,7 +10,8 @@ builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
 
 builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
-builder.Services.AddScoped(sp => new WorkflowApiClient(new HttpClient()));
+builder.Services.AddSingleton<AuthState>();
+builder.Services.AddScoped(sp => new WorkflowApiClient(new HttpClient(), sp.GetRequiredService<AuthState>()));
 builder.Services.AddFluentUIComponents();
 builder.Services.AddSingleton<ThemeState>();
 

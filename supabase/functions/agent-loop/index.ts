@@ -197,14 +197,30 @@ Rules:
 - Keep replies short -- this is a voice interface; the user is hearing this read aloud, not reading it.`;
 }
 
+// Edge Functions get no CORS handling for free (unlike the PostgREST gateway the REST calls go
+// through) -- the browser's preflight OPTIONS request otherwise falls through to the 405 below
+// with no Access-Control-Allow-Origin header, which Safari/WebKit surfaces as an opaque
+// "TypeError: Load failed" rather than a visible CORS error.
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
   if (req.method !== "POST") {
-    return new Response("method not allowed", { status: 405 });
+    return new Response("method not allowed", { status: 405, headers: corsHeaders });
   }
 
   const authHeader = req.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
-    return new Response(JSON.stringify({ error: "missing bearer token" }), { status: 401 });
+    return new Response(JSON.stringify({ error: "missing bearer token" }), {
+      status: 401,
+      headers: corsHeaders,
+    });
   }
   const jwt = authHeader.slice("Bearer ".length);
 
@@ -212,12 +228,15 @@ Deno.serve(async (req) => {
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "invalid JSON body" }), { status: 400 });
+    return new Response(JSON.stringify({ error: "invalid JSON body" }), {
+      status: 400,
+      headers: corsHeaders,
+    });
   }
   if (!body.workflow_id || !Array.isArray(body.messages) || body.messages.length === 0) {
     return new Response(
       JSON.stringify({ error: "workflow_id and a non-empty messages array are required" }),
-      { status: 400 },
+      { status: 400, headers: corsHeaders },
     );
   }
   const queue = body.queue ?? [];
@@ -228,6 +247,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     return new Response(JSON.stringify({ error: `could not load workflow stages: ${e}` }), {
       status: 400,
+      headers: corsHeaders,
     });
   }
 
@@ -312,10 +332,13 @@ Deno.serve(async (req) => {
     messages.push({ role: "user", content: toolResults });
   }
   } catch (e) {
-    return new Response(JSON.stringify({ error: `agent loop failed: ${e}` }), { status: 502 });
+    return new Response(JSON.stringify({ error: `agent loop failed: ${e}` }), {
+      status: 502,
+      headers: corsHeaders,
+    });
   }
 
   return new Response(JSON.stringify({ reply: finalText, messages }), {
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...corsHeaders },
   });
 });

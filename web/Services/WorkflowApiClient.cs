@@ -9,43 +9,39 @@ public record ItemSummary(string Id, string StageId, JsonObject Data);
 public record ChatMessage(string Who, string Body, string? ItemId, string? StageId);
 public record ItemEventRow(string EventType, string? StageId, JsonObject? Data);
 
-// Local-dev-only config (Phase 4b, stubbed auth per 2026-10-15 decision). ApiUrl points at the
-// machine's LAN IP, not 127.0.0.1/localhost, so this also works when the app is opened from a
-// phone on the same wifi (confirmed reachable 2026-10-15 -- local Supabase's Kong gateway binds
-// 0.0.0.0:54321). Swap for the real cloud project URL/anon key once that exists (GOAL.md).
+// Cloud project config (workflow-engine-test, pointed here 2026-10-31 replacing local dev).
+// PublishableKey is the new sb_publishable_... format (replaces the legacy JWT anon key) --
+// goes in the same `apikey` header either way.
 public static class SupabaseConfig
 {
-    public const string ApiUrl = "http://192.168.9.196:54321";
-    public const string AnonKey =
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAi" +
-        "OjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
-    public const string DispatcherId = "8f3a0d26-5d86-4b18-8068-dae74693d42f";
-    public const string DispatcherEmail = "dispatcher@acct1.test";
+    public const string ApiUrl = "https://utwyvtbzesswpoihmlic.supabase.co";
+    public const string PublishableKey = "sb_publishable_Ec1_eTAJtWMb2AaC1ULE7w_8f0BvYsk";
 }
 
 public class WorkflowApiClient
 {
     private readonly HttpClient _http;
+    private readonly AuthState _auth;
 
-    public WorkflowApiClient(HttpClient http)
+    public WorkflowApiClient(HttpClient http, AuthState auth)
     {
         _http = http;
         _http.BaseAddress = new Uri(SupabaseConfig.ApiUrl);
+        _auth = auth;
     }
 
-    private string Jwt => StubAuth.MintJwt(SupabaseConfig.DispatcherId, SupabaseConfig.DispatcherEmail);
-
-    private HttpRequestMessage NewRequest(HttpMethod method, string path)
+    private async Task<HttpRequestMessage> NewRequestAsync(HttpMethod method, string path)
     {
+        var jwt = await _auth.GetValidAccessTokenAsync();
         var req = new HttpRequestMessage(method, path);
-        req.Headers.Add("apikey", SupabaseConfig.AnonKey);
-        req.Headers.Add("Authorization", $"Bearer {Jwt}");
+        req.Headers.Add("apikey", SupabaseConfig.PublishableKey);
+        req.Headers.Add("Authorization", $"Bearer {jwt}");
         return req;
     }
 
     public async Task<List<WorkflowSummary>> GetWorkflowsAsync()
     {
-        var req = NewRequest(HttpMethod.Get, "/rest/v1/workflows?select=id,name,item_label&order=name.asc");
+        var req = await NewRequestAsync(HttpMethod.Get, "/rest/v1/workflows?select=id,name,item_label&order=name.asc");
         var res = await _http.SendAsync(req);
         res.EnsureSuccessStatusCode();
         var rows = await res.Content.ReadFromJsonAsync<List<JsonObject>>() ?? [];
@@ -58,7 +54,7 @@ public class WorkflowApiClient
 
     public async Task<WorkflowSummary?> GetWorkflowAsync(string workflowId)
     {
-        var req = NewRequest(HttpMethod.Get, $"/rest/v1/workflows?id=eq.{workflowId}&select=id,name,item_label");
+        var req = await NewRequestAsync(HttpMethod.Get, $"/rest/v1/workflows?id=eq.{workflowId}&select=id,name,item_label");
         var res = await _http.SendAsync(req);
         res.EnsureSuccessStatusCode();
         var rows = await res.Content.ReadFromJsonAsync<List<JsonObject>>() ?? [];
@@ -69,7 +65,7 @@ public class WorkflowApiClient
 
     public async Task<List<StageSummary>> GetStagesAsync(string workflowId)
     {
-        var req = NewRequest(HttpMethod.Get,
+        var req = await NewRequestAsync(HttpMethod.Get,
             $"/rest/v1/stages?workflow_id=eq.{workflowId}&select=id,title,sequence_order,is_initial,is_terminal&order=sequence_order.asc.nullslast");
         var res = await _http.SendAsync(req);
         res.EnsureSuccessStatusCode();
@@ -85,7 +81,7 @@ public class WorkflowApiClient
 
     public async Task<List<ItemSummary>> GetItemsAsync(string workflowId)
     {
-        var req = NewRequest(HttpMethod.Get,
+        var req = await NewRequestAsync(HttpMethod.Get,
             $"/rest/v1/items?workflow_id=eq.{workflowId}&select=id,stage_id,data&order=updated_at.desc");
         var res = await _http.SendAsync(req);
         res.EnsureSuccessStatusCode();
@@ -103,7 +99,7 @@ public class WorkflowApiClient
     // order gives "this key was last written while at stage X" (2026-10-25).
     public async Task<List<ItemEventRow>> GetItemEventsAsync(string itemId)
     {
-        var req = NewRequest(HttpMethod.Get,
+        var req = await NewRequestAsync(HttpMethod.Get,
             $"/rest/v1/item_events?item_id=eq.{itemId}&select=event_type,stage_id,data&order=created_at.asc");
         var res = await _http.SendAsync(req);
         res.EnsureSuccessStatusCode();
@@ -130,7 +126,7 @@ public class WorkflowApiClient
             ["selected_item_label"] = selectedItemLabel,
             ["selected_stage_title"] = selectedStageTitle,
         };
-        var req = NewRequest(HttpMethod.Post, "/functions/v1/agent-loop");
+        var req = await NewRequestAsync(HttpMethod.Post, "/functions/v1/agent-loop");
         req.Content = JsonContent.Create(body);
         var res = await _http.SendAsync(req);
         var text = await res.Content.ReadAsStringAsync();
@@ -144,7 +140,7 @@ public class WorkflowApiClient
     // callers can just render them top-to-bottom as they come back.
     public async Task<List<ChatMessage>> GetChatMessagesAsync(string workflowId)
     {
-        var req = NewRequest(HttpMethod.Get,
+        var req = await NewRequestAsync(HttpMethod.Get,
             $"/rest/v1/chat_messages?workflow_id=eq.{workflowId}&select=who,body,item_id,stage_id&order=created_at.asc");
         var res = await _http.SendAsync(req);
         res.EnsureSuccessStatusCode();
@@ -159,7 +155,7 @@ public class WorkflowApiClient
 
     public async Task AddChatMessageAsync(string workflowId, string who, string body, string? itemId, string? stageId)
     {
-        var req = NewRequest(HttpMethod.Post, "/rest/v1/chat_messages");
+        var req = await NewRequestAsync(HttpMethod.Post, "/rest/v1/chat_messages");
         req.Content = JsonContent.Create(new JsonObject
         {
             ["workflow_id"] = workflowId,
