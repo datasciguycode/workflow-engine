@@ -1,0 +1,61 @@
+name: Deploy web app to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+# Least privilege for the Pages deploy: read the repo, write Pages, mint the OIDC token
+# deploy-pages uses to authenticate the deployment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; don't cancel an in-flight production deploy mid-way.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - id: pages
+        uses: actions/configure-pages@v6
+
+      - name: Publish Blazor WASM
+        run: dotnet publish web/WorkflowApp.Web.csproj -c Release -o publish
+
+      - name: Set <base href> for the Pages base path
+        env:
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: |
+          f=publish/wwwroot/index.html
+          sed -i "s|<base href=\"/\" />|<base href=\"${BASE_PATH}/\" />|" "$f"
+          # Fail loudly rather than deploy a white screen if the tag format ever drifts.
+          test "$(grep -c "<base href=\"${BASE_PATH}/\" />" "$f")" -eq 1
+          grep -n '<base href' "$f"
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: publish/wwwroot
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

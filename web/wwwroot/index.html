@@ -10,7 +10,21 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>WorkflowApp.Web</title>
+    <!-- CI rewrites the base href below to the Pages base path; see .github/workflows/deploy-pages.yml -->
     <base href="/" />
+    <script>
+      // Counterpart to 404.html (GitHub Pages SPA fallback): turn /workflow-engine/?/workflow/abc&x=1
+      // back into /workflow-engine/workflow/abc?x=1 before the Blazor router reads the URL.
+      // No-op unless the query string starts with "?/", so local dev is unaffected.
+      (function (l) {
+        if (l.search[1] === '/') {
+          var decoded = l.search.slice(1).split('&').map(function (s) {
+            return s.replace(/~and~/g, '&');
+          }).join('?');
+          window.history.replaceState(null, null, l.pathname.slice(0, -1) + decoded + l.hash);
+        }
+      }(window.location));
+    </script>
     <link rel="preload" id="webassembly" />
     <link href="_content/Microsoft.FluentUI.AspNetCore.Components/css/reboot.css" rel="stylesheet" />
     <link rel="stylesheet" href="css/app.css?v=20261031c" />

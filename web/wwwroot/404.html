@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Workflow Engine</title>
+  <script>
+    // GitHub Pages SPA fallback (rafgraph/spa-github-pages). Pages serves this file for any
+    // unknown path; we bounce to the app root with the original path encoded in the query
+    // string, and index.html's decoder restores it before Blazor boots.
+    // pathSegmentsToKeep = 1 because this is a project page (/workflow-engine/...).
+    // Set to 0 if the site ever moves to a custom domain / user page at the root.
+    var pathSegmentsToKeep = 1;
+    var l = window.location;
+    l.replace(
+      l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+      l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/') + '/?/' +
+      l.pathname.slice(1).split('/').slice(pathSegmentsToKeep).join('/').replace(/&/g, '~and~') +
+      (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+      l.hash
+    );
+  </script>
+</head>
+<body></body>
+</html>
