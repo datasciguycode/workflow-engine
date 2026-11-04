@@ -325,7 +325,8 @@ else
                 selectedItemId: _selectedItem?.Id,
                 selectedItemLabel: _selectedItem is null ? null : ItemTitle(_selectedItem),
                 selectedStageTitle: _selectedStageId is not null ? StageTitle(_selectedStageId)
-                    : _selectedItem is not null ? StageTitle(_selectedItem.StageId) : null);
+                    : _selectedItem is not null ? StageTitle(_selectedItem.StageId) : null,
+                stageDrilledIn: _selectedStageId is not null);
             _messages = messages;
             _chatLog.Add(("Agent", reply, itemId, stageId));
             await Api.AddChatMessageAsync(WorkflowId, StoredWho("Agent"), reply, itemId, stageId);
