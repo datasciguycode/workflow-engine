@@ -114,14 +114,7 @@ else
                     <div style="opacity:0.7; margin-top:2px;">Stage: @StageTitle(item.StageId)</div>
                 </FluentCard>
             }
-            @if (_items.Count == 0)
-            {
-                <p>No @ItemLabelPlural.ToLowerInvariant() yet. <FluentLink @onclick="StartNewJob">New @ItemLabelSingular</FluentLink></p>
-            }
-            else
-            {
-                <FluentLink @onclick="StartNewJob">+ New @ItemLabelSingular</FluentLink>
-            }
+            <FluentLink @onclick="StartNewJob" Class="back-link">New @ItemLabelSingular</FluentLink>
         </FluentStack>
     }
 
