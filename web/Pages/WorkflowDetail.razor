@@ -25,6 +25,10 @@ else
             {
                 <FluentLink @onclick="BackToList" Class="back-link">&larr; @ItemLabelPlural</FluentLink>
             }
+            else if (_newJobMode)
+            {
+                <FluentLink @onclick="CancelNewJob" Class="back-link">&larr; @ItemLabelPlural</FluentLink>
+            }
             else
             {
                 <FluentLink Href="./" Class="back-link">&larr; Workflows</FluentLink>
@@ -78,9 +82,29 @@ else
             }
         </FluentStack>
     }
+    else if (_newJobMode)
+    {
+        <h1>New @ItemLabelSingular</h1>
+        @if (_stages.FirstOrDefault(s => s.IsInitial) is { } initialStage)
+        {
+            <p style="opacity:0.75;">Starts in <strong>@Capitalize(initialStage.Title)</strong>. Tell the chat below about it.</p>
+            @if (initialStage.Checklist.Count > 0)
+            {
+                <FluentStack Orientation="Orientation.Vertical" VerticalGap="2">
+                    @foreach (var field in initialStage.Checklist)
+                    {
+                        <div style="opacity:0.75;">&#9744; @ChecklistLabel(field)</div>
+                    }
+                </FluentStack>
+            }
+        }
+    }
     else
     {
         <h1>@ItemLabelPlural</h1>
+        <FluentButton Appearance="ButtonAppearance.Primary" @onclick="StartNewJob" Style="margin-bottom:8px;">
+            + New @ItemLabelSingular
+        </FluentButton>
         <FluentStack Orientation="Orientation.Vertical" VerticalGap="8">
             @for (var i = 0; i < _items.Count; i++)
             {
@@ -95,7 +119,7 @@ else
             }
             @if (_items.Count == 0)
             {
-                <p>No @ItemLabelPlural.ToLowerInvariant() yet. Create one below.</p>
+                <p>No @ItemLabelPlural.ToLowerInvariant() yet.</p>
             }
         </FluentStack>
     }
@@ -158,6 +182,13 @@ else
     // shows only the conversation that happened there, not a separate structured history.
     private ItemSummary? _selectedItem;
     private string? _selectedStageId;
+
+    // "+ New Job" on the Jobs list -- a third state alongside _selectedItem/_selectedStageId,
+    // only meaningful while both of those are null. Shows the initial stage's checklist as a
+    // guide and reuses the Jobs list's own chat box (still item_id/stage_id null, same as any
+    // pre-creation chat) rather than a separate flow -- Send() below watches for the resulting
+    // item count increase and auto-drills into the new job's stage once it exists.
+    private bool _newJobMode;
 
     private string ItemLabelSingular =>
         string.IsNullOrEmpty(_workflow?.ItemLabel) ? "Item" :
@@ -301,6 +332,9 @@ else
         _selectedStageId = null;
     }
 
+    private void StartNewJob() => _newJobMode = true;
+    private void CancelNewJob() => _newJobMode = false;
+
     private async Task SelectStage(string stageId)
     {
         _selectedStageId = stageId;
@@ -339,6 +373,8 @@ else
         _draft = "";
         var itemId = _selectedItem?.Id;
         var stageId = _selectedStageId;
+        var wasNewJobMode = _newJobMode;
+        var previousItemCount = _items!.Count;
         _chatLog.Add(("You", text, itemId, stageId));
         _sending = true;
         await Api.AddChatMessageAsync(WorkflowId, StoredWho("You"), text, itemId, stageId);
@@ -363,6 +399,17 @@ else
                 _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
             if (_selectedItem is not null && _selectedStageId is not null)
                 await LoadFieldStageMap(_selectedItem.Id);
+
+            // New-job mode: once create_item actually lands (items grew by one), drop straight
+            // into the new job's own stage view instead of leaving the user back on the Jobs
+            // list -- GetItemsAsync orders by updated_at desc, so the newest item is first.
+            if (wasNewJobMode && _items.Count > previousItemCount)
+            {
+                _newJobMode = false;
+                _selectedItem = _items[0];
+                _selectedStageId = _selectedItem.StageId;
+                await LoadFieldStageMap(_selectedItem.Id);
+            }
         }
         catch (Exception ex)
         {
