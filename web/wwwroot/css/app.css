@@ -45,7 +45,12 @@ html, body {
 
 .page-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  /* The middle column's content is a flex-wrap button group (Chat, + New Job) -- a plain "auto"
+     track sizes to fit it on one unwrapped line regardless of available space, which squeezed
+     the back-link column toward zero width (and overlapping render) once a second button joined
+     it on narrow phones (2026-11-04). minmax(0, auto) lets the track shrink below that, so the
+     buttons wrap onto their own second line instead of starving the other columns. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 4px;
