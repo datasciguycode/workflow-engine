@@ -31,9 +31,12 @@ else
             }
         </div>
         <div class="page-header-chat">
-            <FluentButton Appearance="ButtonAppearance.Primary" @onclick="FocusChatInput">
-                &#128172; Chat
-            </FluentButton>
+            @if (_selectedItem is null || _selectedStageId is not null)
+            {
+                <FluentButton Appearance="ButtonAppearance.Primary" @onclick="FocusChatInput">
+                    &#128172; Chat
+                </FluentButton>
+            }
         </div>
         <div class="page-header-toggle">
             <ThemeToggleButton />
@@ -61,6 +64,16 @@ else
                 <FluentCard Class="clickable-card" style="@($"padding:10px 14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius); {(isCurrent ? "border: 2px solid var(--app-accent);" : "")}")"
                             @onclick="() => SelectStage(stage.Id)">
                     @Capitalize(stage.Title) @if (isCurrent) { <span class="current-badge">current</span> }
+                    @if (stage.Checklist.Count > 0)
+                    {
+                        <div style="margin-top:6px; display:flex; flex-direction:column; gap:2px;" @onclick:stopPropagation="true">
+                            @foreach (var field in stage.Checklist)
+                            {
+                                var done = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
+                                <div style="opacity:0.75; font-size:0.9em;">@(done ? "☑" : "☐") @ChecklistLabel(field)</div>
+                            }
+                        </div>
+                    }
                 </FluentCard>
             }
         </FluentStack>
@@ -100,23 +113,32 @@ else
         </FluentStack>
     }
 
-    <h2>Chat</h2>
-    <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
-        @foreach (var line in CurrentChatLog())
-        {
-            <div class="chat-line" style="max-width:100%; box-sizing:border-box; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                <strong>@line.Who:</strong> @line.Text
-            </div>
-        }
-    </FluentStack>
+    @* No chat box on the job's own overview page (item selected, no stage drilled in) --
+       2026-11-04: intake-style details go on the stage that's actually gathering them, and
+       update_data always tags a field by the item's real current stage regardless of which view
+       you typed from, so having a second chat box here just let the same data be entered from
+       two places with no clear reason to prefer either. Stage-specific chat now only lives on
+       the stage's own drilled-in view below; the Jobs list above keeps its box for creating jobs. *@
+    @if (_selectedItem is null || _selectedStageId is not null)
+    {
+        <h2>Chat</h2>
+        <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
+            @foreach (var line in CurrentChatLog())
+            {
+                <div class="chat-line" style="max-width:100%; box-sizing:border-box; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
+                    <strong>@line.Who:</strong> @line.Text
+                </div>
+            }
+        </FluentStack>
 
-    @* Autofocus removed 2026-10-30: doesn't open iOS's keyboard anyway (confirmed 2026-10-25),
-       but Safari still scroll-jumps the page to bring this box into view on every load, hiding
-       the Talk button and back-link above it. The Talk button is the real focus mechanism now. *@
-    <FluentTextArea id="chat-input" @bind-Value="_draft" Placeholder="Create a job, move an item, add a note..." Rows="2" Style="width:100%;" />
-    <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@_sending" @onclick="Send">
-        @(_sending ? "Sending..." : "Send")
-    </FluentButton>
+        @* Autofocus removed 2026-10-30: doesn't open iOS's keyboard anyway (confirmed 2026-10-25),
+           but Safari still scroll-jumps the page to bring this box into view on every load, hiding
+           the Talk button and back-link above it. The Talk button is the real focus mechanism now. *@
+        <FluentTextArea id="chat-input" @bind-Value="_draft" Placeholder="Create a job, move an item, add a note..." Rows="2" Style="width:100%;" />
+        <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@_sending" @onclick="Send">
+            @(_sending ? "Sending..." : "Send")
+        </FluentButton>
+    }
 }
 
 @code {
@@ -268,6 +290,11 @@ else
     private static string Capitalize(string s) =>
         string.IsNullOrEmpty(s) ? s : char.ToUpperInvariant(s[0]) + s[1..];
 
+    // Checklist entries are data-field keys (snake_case, e.g. "scheduled_at"), chosen to match
+    // exactly so "is this done" can just check item.Data for that key -- this turns the key back
+    // into something readable for display.
+    private static string ChecklistLabel(string field) => Capitalize(field.Replace('_', ' '));
+
     private void SelectItem(ItemSummary item)
     {
         _selectedItem = item;
@@ -324,9 +351,10 @@ else
                 WorkflowId, BuildQueueJson(), _messages,
                 selectedItemId: _selectedItem?.Id,
                 selectedItemLabel: _selectedItem is null ? null : ItemTitle(_selectedItem),
-                selectedStageTitle: _selectedStageId is not null ? StageTitle(_selectedStageId)
-                    : _selectedItem is not null ? StageTitle(_selectedItem.StageId) : null,
-                stageDrilledIn: _selectedStageId is not null);
+                // Chat only exists on the Jobs list (no item) or a stage's own drilled-in view
+                // (both set) now that the job-overview page has no chat box of its own -- so
+                // _selectedStageId is always set here whenever _selectedItem is.
+                selectedStageTitle: _selectedStageId is not null ? StageTitle(_selectedStageId) : null);
             _messages = messages;
             _chatLog.Add(("Agent", reply, itemId, stageId));
             await Api.AddChatMessageAsync(WorkflowId, StoredWho("Agent"), reply, itemId, stageId);

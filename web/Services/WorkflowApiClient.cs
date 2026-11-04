@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 namespace WorkflowApp.Web.Services;
 
 public record WorkflowSummary(string Id, string Name, string ItemLabel);
-public record StageSummary(string Id, string Title, int? SequenceOrder, bool IsInitial, bool IsTerminal);
+public record StageSummary(string Id, string Title, int? SequenceOrder, bool IsInitial, bool IsTerminal, List<string> Checklist);
 public record ItemSummary(string Id, string StageId, JsonObject Data);
 public record ChatMessage(string Who, string Body, string? ItemId, string? StageId);
 public record ItemEventRow(string EventType, string? StageId, JsonObject? Data);
@@ -66,7 +66,7 @@ public class WorkflowApiClient
     public async Task<List<StageSummary>> GetStagesAsync(string workflowId)
     {
         var req = await NewRequestAsync(HttpMethod.Get,
-            $"/rest/v1/stages?workflow_id=eq.{workflowId}&select=id,title,sequence_order,is_initial,is_terminal&order=sequence_order.asc.nullslast");
+            $"/rest/v1/stages?workflow_id=eq.{workflowId}&select=id,title,sequence_order,is_initial,is_terminal,checklist&order=sequence_order.asc.nullslast");
         var res = await _http.SendAsync(req);
         res.EnsureSuccessStatusCode();
         var rows = await res.Content.ReadFromJsonAsync<List<JsonObject>>() ?? [];
@@ -75,7 +75,10 @@ public class WorkflowApiClient
             r["title"]!.GetValue<string>(),
             r["sequence_order"]?.GetValue<int?>(),
             r["is_initial"]!.GetValue<bool>(),
-            r["is_terminal"]!.GetValue<bool>()
+            r["is_terminal"]!.GetValue<bool>(),
+            r["checklist"] is JsonArray arr
+                ? arr.Select(v => v!.GetValue<string>()).ToList()
+                : []
         )).ToList();
     }
 
@@ -115,8 +118,7 @@ public class WorkflowApiClient
     // tool_use, and tool_result blocks all round-trip through here -- see agent-loop/index.ts).
     public async Task<(string Reply, JsonArray Messages)> SendAgentMessageAsync(
         string workflowId, JsonArray queue, JsonArray messages,
-        string? selectedItemId = null, string? selectedItemLabel = null, string? selectedStageTitle = null,
-        bool stageDrilledIn = false)
+        string? selectedItemId = null, string? selectedItemLabel = null, string? selectedStageTitle = null)
     {
         var body = new JsonObject
         {
@@ -126,7 +128,6 @@ public class WorkflowApiClient
             ["selected_item_id"] = selectedItemId,
             ["selected_item_label"] = selectedItemLabel,
             ["selected_stage_title"] = selectedStageTitle,
-            ["stage_drilled_in"] = stageDrilledIn,
         };
         var req = await NewRequestAsync(HttpMethod.Post, "/functions/v1/agent-loop");
         req.Content = JsonContent.Create(body);

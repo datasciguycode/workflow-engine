@@ -39,11 +39,6 @@ type RequestBody = {
   selected_item_id?: string;
   selected_item_label?: string;
   selected_stage_title?: string;
-  // True only when the user has drilled into a specific stage's own view (not just the job's
-  // page, where selected_stage_title falls back to the item's current stage for context).
-  // Lets the agent tell stage-specific chat apart from job-level chat (2026-11-04: user wants to
-  // be nudged toward the stage's own view when what they're saying is stage-specific).
-  stage_drilled_in?: boolean;
 };
 
 // Thin wrapper around PostgREST, forwarding the CALLER's own JWT (not the service role key) so
@@ -180,21 +175,22 @@ function systemPrompt(
   selectedItemId?: string,
   selectedItemLabel?: string,
   selectedStageTitle?: string,
-  stageDrilledIn?: boolean,
 ) {
   const selectedContext = selectedItemId
-    ? `\nThe user currently has this job open in the UI: "${selectedItemLabel ?? selectedItemId}" (id ${selectedItemId}), viewing its "${selectedStageTitle ?? "unknown"}" stage. Default to this job for any message that doesn't clearly name a different one -- the user is looking at it, so don't ask "which job?" just because other jobs also exist in the queue below. Only ask for clarification if the message itself points elsewhere (e.g. names a different customer/vehicle) or there's no job open at all.\n` +
-      `They are specifically viewing the ${stageDrilledIn ? `"${selectedStageTitle ?? "unknown"}" stage's own sub-view (drilled in)` : "job's own page (not drilled into any one stage)"}.\n`
+    ? `\nThe user currently has this job open in the UI, drilled into its "${selectedStageTitle ?? "unknown"}" stage's own view: "${selectedItemLabel ?? selectedItemId}" (id ${selectedItemId}). Default to this job for any message that doesn't clearly name a different one -- the user is looking at it, so don't ask "which job?" just because other jobs also exist in the queue below. Only ask for clarification if the message itself points elsewhere (e.g. names a different customer/vehicle) or there's no job open at all.\n`
     : "";
   return `You are a workflow assistant for a mechanic-shop / task-tracking app. You act on the user's spoken-or-typed instructions using the tools available to you.
 
 Active workflow's stages (id, title, sequence_order, is_initial, is_terminal, checklist):
 ${JSON.stringify(stages)}
-A stage's checklist, where present, lists the kind of info that's typically gathered at that
-stage (e.g. intake: name, phone, address) -- a soft guide for what to ask about, not a hard
+A stage's checklist, where present, lists the data.* field keys typically filled in at that stage
+(e.g. intake: customer, phone, address) -- a soft guide for what to ask about, not a hard
 requirement. Not every job needs every checklist item filled in, and a missing one should never
 block creating a job or moving it forward; just use it to know what's worth asking for if the
-user hasn't already given it.
+user hasn't already given it. When you do capture a value for one, write it via update_data (or
+in create_item's initial data) using that exact key -- the UI shows each stage's checklist as
+done/not-done by checking for that key in the item's data, so a note-only add_note call for it
+won't show as done even though you recorded it somewhere.
 ${selectedContext}
 Reference queue -- items recently mentioned or created in this conversation, numbered by order of mention (the user may say "number one", "the second one", etc. instead of a name):
 ${JSON.stringify(queue)}
@@ -206,7 +202,6 @@ Rules:
 - Act immediately -- the user's message is already visible on screen, so there's no need to restate what you're about to do and wait for a separate "yes" before calling a tool. Call the tool as soon as the instruction (or job-creation/move request) is clear; only ask first if it's genuinely ambiguous which item or stage is meant (see above).
 - After a tool call succeeds, reply with a short acknowledgment only (e.g. "Saved."). Do not read back the data you just wrote.
 - After a successful create_item, update_data, or add_note call (but not right after a move_stage -- you just said where it moved, don't immediately ask about moving it again), proactively add which stage the item is currently in and what the next stage is (by sequence_order), and ask if they want to move there now. Do this every time -- don't wait for the user to separately ask "what's next?". Skip it only if the item is already at a terminal stage (is_terminal).
-- If the user is on the job's own page (stage_drilled_in is false above) and their message is about a specific stage's detail (e.g. a scheduling date, diagnosis findings, an estimate) rather than the job as a whole, still act on it, but briefly add that this kind of detail is better said from that stage's own view so it stays organized there.
 - If a tool call fails (e.g. a rejected stage move), explain briefly in plain text what went wrong. Don't retry automatically.
 - Keep replies short -- this is a voice interface; the user is hearing this read aloud, not reading it.`;
 }
@@ -297,7 +292,6 @@ Deno.serve(async (req) => {
           body.selected_item_id,
           body.selected_item_label,
           body.selected_stage_title,
-          body.stage_drilled_in,
         ),
         tools: TOOLS,
         thinking: { type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } },
