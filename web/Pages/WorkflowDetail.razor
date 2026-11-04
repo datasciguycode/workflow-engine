@@ -34,11 +34,17 @@ else
                 <FluentLink Href="./" Class="back-link">&larr; Workflows</FluentLink>
             }
         </div>
-        <div class="page-header-chat">
+        <div class="page-header-chat" style="display:flex; gap:8px; flex-wrap:wrap;">
             @if (_selectedItem is null || _selectedStageId is not null)
             {
                 <FluentButton Appearance="ButtonAppearance.Primary" @onclick="FocusChatInput">
                     &#128172; Chat
+                </FluentButton>
+            }
+            @if (_selectedItem is null && !_newJobMode)
+            {
+                <FluentButton Appearance="ButtonAppearance.Primary" @onclick="StartNewJob">
+                    + New @ItemLabelSingular
                 </FluentButton>
             }
         </div>
@@ -102,9 +108,6 @@ else
     else
     {
         <h1>@ItemLabelPlural</h1>
-        <FluentButton Appearance="ButtonAppearance.Primary" @onclick="StartNewJob" Style="margin-bottom:8px;">
-            + New @ItemLabelSingular
-        </FluentButton>
         <FluentStack Orientation="Orientation.Vertical" VerticalGap="8">
             @for (var i = 0; i < _items.Count; i++)
             {
