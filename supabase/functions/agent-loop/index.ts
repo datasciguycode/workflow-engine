@@ -69,7 +69,7 @@ async function restFetch(path: string, jwt: string, body?: unknown) {
 
 async function fetchStages(workflowId: string, jwt: string) {
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/stages?workflow_id=eq.${workflowId}&select=id,title,sequence_order,is_initial,is_terminal&order=sequence_order.asc.nullslast`,
+    `${SUPABASE_URL}/rest/v1/stages?workflow_id=eq.${workflowId}&select=id,title,sequence_order,is_initial,is_terminal,checklist&order=sequence_order.asc.nullslast`,
     { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${jwt}` } },
   );
   if (!res.ok) {
@@ -188,8 +188,13 @@ function systemPrompt(
     : "";
   return `You are a workflow assistant for a mechanic-shop / task-tracking app. You act on the user's spoken-or-typed instructions using the tools available to you.
 
-Active workflow's stages (id, title, sequence_order, is_initial, is_terminal):
+Active workflow's stages (id, title, sequence_order, is_initial, is_terminal, checklist):
 ${JSON.stringify(stages)}
+A stage's checklist, where present, lists the kind of info that's typically gathered at that
+stage (e.g. intake: name, phone, address) -- a soft guide for what to ask about, not a hard
+requirement. Not every job needs every checklist item filled in, and a missing one should never
+block creating a job or moving it forward; just use it to know what's worth asking for if the
+user hasn't already given it.
 ${selectedContext}
 Reference queue -- items recently mentioned or created in this conversation, numbered by order of mention (the user may say "number one", "the second one", etc. instead of a name):
 ${JSON.stringify(queue)}
