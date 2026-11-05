@@ -67,7 +67,7 @@ else
                 var isCurrent = stage.Id == _selectedItem.StageId;
                 <FluentCard Class="clickable-card" style="@($"padding:10px 14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius); {(isCurrent ? "border: 2px solid var(--app-accent);" : "")}")"
                             @onclick="() => SelectStage(stage.Id)">
-                    @Capitalize(stage.Title) @if (isCurrent) { <span class="current-badge">current</span> }
+                    <strong style="color:var(--app-accent);">@Capitalize(stage.Title) &rarr;</strong> @if (isCurrent) { <span class="current-badge">current</span> }
                     @if (stage.Checklist.Count > 0)
                     {
                         <div style="margin-top:6px; display:flex; flex-direction:column; gap:2px;" @onclick:stopPropagation="true">
