@@ -19,7 +19,7 @@ else
         <div class="page-header-back">
             @if (_selectedStageId is not null && _selectedItem is not null)
             {
-                <FluentLink @onclick="BackToItem" Class="back-link" Style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">&larr; @ItemTitle(_selectedItem)</FluentLink>
+                <FluentLink @onclick="BackToItem" Class="back-link">&larr; Stages</FluentLink>
             }
             else if (_selectedItem is not null)
             {
@@ -59,7 +59,7 @@ else
     }
     else if (_selectedItem is not null)
     {
-        <h1 style="overflow-wrap:anywhere; word-break:break-word;">@ItemTitle(_selectedItem)</h1>
+        <h1>Job</h1>
         <h2>Stages</h2>
         <FluentStack Orientation="Orientation.Vertical" VerticalGap="6">
             @foreach (var stage in _stages.OrderBy(s => s.SequenceOrder ?? int.MaxValue))
