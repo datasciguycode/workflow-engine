@@ -109,7 +109,7 @@ else
                 var number = i + 1;
                 <FluentCard Class="clickable-card" style="padding:14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius);" @onclick="() => SelectItem(item)">
                     <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                        <strong>@number. @ItemTitle(item)</strong>
+                        <strong style="color:var(--app-accent);">@number. @ItemTitle(item)</strong>
                     </div>
                     <div style="opacity:0.7; margin-top:2px;">Stage: @StageTitle(item.StageId)</div>
                 </FluentCard>
