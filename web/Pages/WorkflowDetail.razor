@@ -63,7 +63,7 @@ else
         @foreach (var (key, value) in ItemFieldsForStage(_selectedItem, _selectedStageId))
         {
             <div class="field-row" style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                <span class="field-key">@ChecklistLabel(key):</span> @FieldText(value)
+                <span class="field-key">@ChecklistLabel(key):</span> @FieldText(key, value)
             </div>
         }
     }
@@ -135,7 +135,7 @@ else
             @foreach (var (key, value) in ItemFields(_selectedItem))
             {
                 <div class="field-row" style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                    <span class="field-key">@ChecklistLabel(key):</span> @FieldText(value)
+                    <span class="field-key">@ChecklistLabel(key):</span> @FieldText(key, value)
                 </div>
             }
         </FluentStack>
@@ -254,13 +254,28 @@ else
         _ => displayWho,
     };
 
-    private static string FieldText(JsonNode? value) =>
+    // The agent writes date/time fields (e.g. scheduled_at) as plain ISO 8601 strings -- shown
+    // as-is that reads as a raw timestamp rather than something a human would say out loud
+    // (2026-11-06). Reformat it if the key itself looks date-ish (avoids misreading an unrelated
+    // string, e.g. an address or phone number, that happens to parse as a DateTime) and the value
+    // round-trips through DateTime parsing; anything else is left untouched.
+    private static string FieldText(string key, JsonNode? value) =>
         value switch
         {
             null => "null",
+            JsonValue v when v.GetValueKind() == System.Text.Json.JsonValueKind.String &&
+                LooksLikeDateField(key) &&
+                DateTime.TryParse(v.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var dt)
+                => dt.ToString("MMMM d, yyyy, h:mm tt", System.Globalization.CultureInfo.InvariantCulture),
             JsonValue v => v.ToString(),
             _ => value.ToJsonString(),
         };
+
+    private static bool LooksLikeDateField(string key) =>
+        key.Contains("date", StringComparison.OrdinalIgnoreCase) ||
+        key.Contains("time", StringComparison.OrdinalIgnoreCase) ||
+        key.EndsWith("_at", StringComparison.OrdinalIgnoreCase);
 
     private string ItemTitle(ItemSummary item)
     {
