@@ -63,7 +63,7 @@ else
         @foreach (var (key, value) in ItemFieldsForStage(_selectedItem, _selectedStageId))
         {
             <div class="field-row" style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                <span class="field-key">@key:</span> @FieldText(value)
+                <span class="field-key">@ChecklistLabel(key):</span> @FieldText(value)
             </div>
         }
     }
@@ -135,7 +135,7 @@ else
             @foreach (var (key, value) in ItemFields(_selectedItem))
             {
                 <div class="field-row" style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                    <span class="field-key">@key:</span> @FieldText(value)
+                    <span class="field-key">@ChecklistLabel(key):</span> @FieldText(value)
                 </div>
             }
         </FluentStack>
