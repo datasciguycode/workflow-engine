@@ -114,6 +114,22 @@ public class WorkflowApiClient
         )).ToList();
     }
 
+    // Same RPC the agent's move_stage tool calls (supabase/functions/agent-loop/index.ts) --
+    // used directly by the UI's "Done" button so advancing a stage doesn't require going through
+    // chat once its checklist is already complete (2026-11-05).
+    public async Task MoveStageAsync(string itemId, string toStageId)
+    {
+        var req = await NewRequestAsync(HttpMethod.Post, "/rest/v1/rpc/move_stage");
+        req.Content = JsonContent.Create(new JsonObject
+        {
+            ["p_item_id"] = itemId,
+            ["p_to_stage_id"] = toStageId,
+        });
+        var res = await _http.SendAsync(req);
+        if (!res.IsSuccessStatusCode)
+            throw new HttpRequestException($"move_stage failed ({(int)res.StatusCode}): {await res.Content.ReadAsStringAsync()}");
+    }
+
     // messages is the running Anthropic-shaped message array, passed through opaquely (text,
     // tool_use, and tool_result blocks all round-trip through here -- see agent-loop/index.ts).
     public async Task<(string Reply, JsonArray Messages)> SendAgentMessageAsync(

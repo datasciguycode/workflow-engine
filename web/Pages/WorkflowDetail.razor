@@ -59,6 +59,14 @@ else
                     <div style="opacity:0.75;">@(done ? "☑" : "☐") @ChecklistLabel(field)</div>
                 }
             </FluentStack>
+            @if (selectedStage.Checklist.All(f => _selectedItem.Data.TryGetPropertyValue(f, out var v) && v is not null)
+                && NextStage(selectedStage.Id) is { } nextStage)
+            {
+                <FluentButton Appearance="ButtonAppearance.Primary" Disabled="_movingStage"
+                              Style="margin-bottom:12px;" @onclick="() => DoneMoveToNextStage(nextStage.Id)">
+                    Done &rarr; @Capitalize(nextStage.Title)
+                </FluentButton>
+            }
         }
         @foreach (var (key, value) in ItemFieldsForStage(_selectedItem, _selectedStageId))
         {
@@ -343,6 +351,38 @@ else
     {
         _selectedStageId = stageId;
         await LoadFieldStageMap(_selectedItem!.Id);
+    }
+
+    // Same ordering as the Stages overview list -- "next" is simply the next one in sequence.
+    private StageSummary? NextStage(string stageId)
+    {
+        var ordered = _stages!.OrderBy(s => s.SequenceOrder ?? int.MaxValue).ToList();
+        var i = ordered.FindIndex(s => s.Id == stageId);
+        return i >= 0 && i + 1 < ordered.Count ? ordered[i + 1] : null;
+    }
+
+    private bool _movingStage;
+
+    // The chat-driven move_stage tool asks the user to confirm before moving on -- this button is
+    // the shortcut for when the checklist is already complete and that confirmation is just
+    // friction (2026-11-05).
+    private async Task DoneMoveToNextStage(string toStageId)
+    {
+        if (_movingStage || _selectedItem is null) return;
+        _movingStage = true;
+        try
+        {
+            await Api.MoveStageAsync(_selectedItem.Id, toStageId);
+            _items = await Api.GetItemsAsync(WorkflowId);
+            _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
+            _selectedStageId = toStageId;
+            if (_selectedItem is not null)
+                await LoadFieldStageMap(_selectedItem.Id);
+        }
+        finally
+        {
+            _movingStage = false;
+        }
     }
 
     private void BackToItem() => _selectedStageId = null;
