@@ -10,6 +10,8 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>WorkflowApp.Web</title>
+    <!-- CI stamps a fresh build id below on every deploy; see .github/workflows/deploy-pages.yml -->
+    <meta name="build-id" content="dev" />
     <!-- CI rewrites the base href below to the Pages base path; see .github/workflows/deploy-pages.yml -->
     <base href="/" />
     <script>
@@ -24,6 +26,33 @@
           window.history.replaceState(null, null, l.pathname.slice(0, -1) + decoded + l.hash);
         }
       }(window.location));
+    </script>
+    <script>
+      // GitHub Pages sends every file with a 10-minute browser cache, which the no-cache meta
+      // tags above don't override -- real HTTP cache-control headers win. That leaves this page
+      // free to serve a stale copy of itself for up to 10 minutes after a deploy, and iOS's
+      // Home Screen "standalone" shell doesn't reliably revalidate it on relaunch either
+      // (2026-11-06: multiple updates failed to show up after a deploy + full app relaunch).
+      // This re-fetches the page itself with cache bypassed and force-reloads once, via a
+      // cache-busting query string, if the build id it finds doesn't match what's currently
+      // loaded. Guarded by sessionStorage so it only runs once per launch, not on every
+      // in-app navigation (which doesn't re-run this script anyway, since Blazor is an SPA).
+      (function () {
+        try {
+          if (sessionStorage.getItem('buildCheckDone')) return;
+          sessionStorage.setItem('buildCheckDone', '1');
+          var current = document.querySelector('meta[name="build-id"]').content;
+          fetch(location.pathname, { cache: 'no-store' })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+              var m = html.match(/name="build-id" content="([^"]+)"/);
+              if (m && m[1] && m[1] !== current) {
+                location.replace(location.pathname + '?_cb=' + Date.now() + location.hash);
+              }
+            })
+            .catch(function () { });
+        } catch (e) { }
+      })();
     </script>
     <link rel="preload" id="webassembly" />
     <link href="_content/Microsoft.FluentUI.AspNetCore.Components/css/reboot.css" rel="stylesheet" />

@@ -46,6 +46,15 @@ jobs:
           test "$(grep -c "<base href=\"${BASE_PATH}/\" />" "$f")" -eq 1
           grep -n '<base href' "$f"
 
+      # Stamps a unique id per deploy so index.html's own startup script can tell a stale cached
+      # copy of itself apart from the current one and force a fresh reload (see index.html).
+      - name: Stamp build id
+        run: |
+          f=publish/wwwroot/index.html
+          sed -i "s|<meta name=\"build-id\" content=\"dev\" />|<meta name=\"build-id\" content=\"${GITHUB_SHA}-$(date -u +%s)\" />|" "$f"
+          test "$(grep -c '<meta name="build-id"' "$f")" -eq 1
+          grep -n '<meta name="build-id"' "$f"
+
       - uses: actions/upload-pages-artifact@v5
         with:
           path: publish/wwwroot
