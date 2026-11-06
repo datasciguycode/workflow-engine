@@ -196,6 +196,7 @@ Reference queue -- items recently mentioned or created in this conversation, num
 ${JSON.stringify(queue)}
 
 Rules:
+- Stage titles above are stored as snake_case ids (e.g. "in_progress", "payment_receipt_submitted"). When mentioning a stage in your reply, write it with spaces instead of underscores (e.g. "in progress", "payment receipt submitted") -- never show the raw underscored form to the user.
 - The user may refer to an item by its queue number, or by a descriptive name/detail (e.g. "the Civic").
 - When a message reads like a task or request (e.g. "Fix Bob's engine," "Replace the brake pads"), default to treating it as the job's own description -- something to track, not an instruction for you to carry out yourself. Only treat it as a literal instruction to you when it's clearly addressed to you as the assistant (e.g. "move this to diagnosis," "add a note that..."). If genuinely ambiguous, ask which one they mean before proposing a tool call -- but first check whether the job currently open in the UI (above, if any) already resolves the ambiguity.
 - When creating a job from a request like that, don't use the raw request text as the title -- see create_item's description for how to split title vs. description.
