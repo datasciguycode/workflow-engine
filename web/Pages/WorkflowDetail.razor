@@ -50,6 +50,16 @@ else
     @if (_selectedStageId is not null && _selectedItem is not null)
     {
         <h1 style="overflow-wrap:anywhere; word-break:break-word;">@StageTitle(_selectedStageId)</h1>
+        @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId) is { Checklist.Count: > 0 } selectedStage)
+        {
+            <FluentStack Orientation="Orientation.Vertical" VerticalGap="2" Style="margin-bottom:12px;">
+                @foreach (var field in selectedStage.Checklist)
+                {
+                    var done = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
+                    <div style="opacity:0.75;">@(done ? "☑" : "☐") @ChecklistLabel(field)</div>
+                }
+            </FluentStack>
+        }
         @foreach (var (key, value) in ItemFieldsForStage(_selectedItem, _selectedStageId))
         {
             <div class="field-row" style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
