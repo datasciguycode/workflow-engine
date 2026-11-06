@@ -77,7 +77,7 @@ else
                 var isCurrent = stage.Id == _selectedItem.StageId;
                 <FluentCard Class="clickable-card" style="@($"padding:10px 14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius); {(isCurrent ? "border: 2px solid var(--app-accent);" : "")}")"
                             @onclick="() => SelectStage(stage.Id)">
-                    <strong style="color:var(--app-accent);">@Capitalize(stage.Title) &rarr;</strong> @if (isCurrent) { <span class="current-badge">current</span> }
+                    <strong style="color:var(--app-accent);">@Capitalize(stage.Title.Replace('_', ' ')) &rarr;</strong> @if (isCurrent) { <span class="current-badge">current</span> }
                     @if (stage.Checklist.Count > 0)
                     {
                         <div style="margin-top:6px; display:flex; flex-direction:column; gap:2px;" @onclick:stopPropagation="true">
@@ -325,7 +325,7 @@ else
         ItemFields(item).Where(kv => _fieldStage.TryGetValue(kv.Key, out var s) && s == stageId);
 
     private string StageTitle(string? stageId) =>
-        Capitalize(_stages?.FirstOrDefault(s => s.Id == stageId)?.Title ?? stageId ?? "");
+        Capitalize((_stages?.FirstOrDefault(s => s.Id == stageId)?.Title ?? stageId ?? "").Replace('_', ' '));
 
     // Display-only -- stage titles are stored lowercase (some with underscores, e.g.
     // payment_receipt_submitted), so this just capitalizes the first letter rather than
