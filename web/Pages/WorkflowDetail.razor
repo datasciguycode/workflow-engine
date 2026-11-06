@@ -162,7 +162,7 @@ else
         @* Autofocus removed 2026-10-30: doesn't open iOS's keyboard anyway (confirmed 2026-10-25),
            but Safari still scroll-jumps the page to bring this box into view on every load, hiding
            the Talk button and back-link above it. The Talk button is the real focus mechanism now. *@
-        <FluentTextArea id="chat-input" @bind-Value="_draft" Placeholder="Create a job, move an item, add a note..." Rows="2" Style="width:100%;" />
+        <FluentTextArea id="chat-input" @bind-Value="_draft" Rows="2" Style="width:100%;" />
         <div style="display:flex; flex-wrap:wrap; gap:8px;">
             <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@_sending" @onclick="Send">
                 @(_sending ? "Sending..." : "Send")
