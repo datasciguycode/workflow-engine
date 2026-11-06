@@ -205,6 +205,7 @@ else
     // pre-creation chat) rather than a separate flow -- Send() below watches for the resulting
     // item count increase and auto-drills into the new job's stage once it exists.
     private bool _newJobMode;
+    private int _newJobChatStartIndex;
 
     private string ItemLabelSingular =>
         string.IsNullOrEmpty(_workflow?.ItemLabel) ? "Item" :
@@ -358,7 +359,11 @@ else
         _selectedStageId = null;
     }
 
-    private void StartNewJob() => _newJobMode = true;
+    private void StartNewJob()
+    {
+        _newJobChatStartIndex = _chatLog.Count;
+        _newJobMode = true;
+    }
     private void CancelNewJob() => _newJobMode = false;
 
     private async Task SelectStage(string stageId)
@@ -425,9 +430,15 @@ else
     // which read as "the chat for the current stage is empty" even though the job clearly had a
     // conversation behind it). The job-level view (item selected, no stage) stays untouched by
     // this -- it shows only its own no-stage lines, not every stage's lines layered in.
+    // New-job mode shows no-item chat lines too (same shape as the Jobs list's own chat, since no
+    // item exists yet to tag them with) -- but scoped to lines added since this New Job screen was
+    // opened, otherwise every past job-creation conversation (all also itemId-less at the time they
+    // were sent) would show up here too (2026-11-06).
     private IEnumerable<(string Who, string Text, string? ItemId, string? StageId)> CurrentChatLog() =>
-        _chatLog.Where(l => l.ItemId == _selectedItem?.Id &&
-            (l.StageId == _selectedStageId || (_selectedStageId is not null && l.StageId is null)));
+        _newJobMode
+            ? _chatLog.Skip(_newJobChatStartIndex).Where(l => l.ItemId is null)
+            : _chatLog.Where(l => l.ItemId == _selectedItem?.Id &&
+                (l.StageId == _selectedStageId || (_selectedStageId is not null && l.StageId is null)));
 
     // iOS Safari only opens the keyboard (and its dictation mic icon) from a focus() call made
     // synchronously inside a real tap handler -- autofocus and any focus triggered by page
