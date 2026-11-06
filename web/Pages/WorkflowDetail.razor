@@ -150,20 +150,12 @@ else
     @if (_selectedItem is null || _selectedStageId is not null)
     {
         <h2>Chat</h2>
-        <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
-            @foreach (var line in CurrentChatLog())
-            {
-                <div class="chat-line" style="max-width:100%; box-sizing:border-box; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                    <strong>@line.Who:</strong> @line.Text
-                </div>
-            }
-        </FluentStack>
 
         @* Autofocus removed 2026-10-30: doesn't open iOS's keyboard anyway (confirmed 2026-10-25),
            but Safari still scroll-jumps the page to bring this box into view on every load, hiding
            the Talk button and back-link above it. The Talk button is the real focus mechanism now. *@
         <FluentTextArea id="chat-input" @bind-Value="_draft" Rows="2" Style="width:100%;" />
-        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
             <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@_sending" @onclick="Send">
                 @(_sending ? "Sending..." : "Send")
             </FluentButton>
@@ -174,6 +166,18 @@ else
                 </FluentButton>
             }
         </div>
+
+        @* Moved below the input (2026-11-06) -- a growing chat log used to push the input (and
+           the Complete Stage button) further down the page with every reply, eventually off the
+           visible area. The input now stays right under the heading regardless of log length. *@
+        <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
+            @foreach (var line in CurrentChatLog())
+            {
+                <div class="chat-line" style="max-width:100%; box-sizing:border-box; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
+                    <strong>@line.Who:</strong> @line.Text
+                </div>
+            }
+        </FluentStack>
     }
 }
 
