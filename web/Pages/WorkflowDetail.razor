@@ -59,14 +59,6 @@ else
                     <div style="opacity:0.75;">@(done ? "☑" : "☐") @ChecklistLabel(field)</div>
                 }
             </FluentStack>
-            @if (selectedStage.Checklist.All(f => _selectedItem.Data.TryGetPropertyValue(f, out var v) && v is not null)
-                && NextStage(selectedStage.Id) is { } nextStage)
-            {
-                <FluentButton Appearance="ButtonAppearance.Primary" Disabled="_movingStage"
-                              Style="margin-bottom:12px;" @onclick="() => DoneMoveToNextStage(nextStage.Id)">
-                    Done &rarr; @Capitalize(nextStage.Title)
-                </FluentButton>
-            }
         }
         @foreach (var (key, value) in ItemFieldsForStage(_selectedItem, _selectedStageId))
         {
@@ -174,6 +166,14 @@ else
         <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@_sending" @onclick="Send">
             @(_sending ? "Sending..." : "Send")
         </FluentButton>
+        @if (_selectedStageId is not null && DoneNextStage() is { } nextStage)
+        {
+            <div style="margin-top:8px;">
+                <FluentButton Appearance="ButtonAppearance.Primary" Disabled="_movingStage" @onclick="() => DoneMoveToNextStage(nextStage.Id)">
+                    Done &rarr; @Capitalize(nextStage.Title)
+                </FluentButton>
+            </div>
+        }
     }
 }
 
@@ -359,6 +359,16 @@ else
         var ordered = _stages!.OrderBy(s => s.SequenceOrder ?? int.MaxValue).ToList();
         var i = ordered.FindIndex(s => s.Id == stageId);
         return i >= 0 && i + 1 < ordered.Count ? ordered[i + 1] : null;
+    }
+
+    // The next stage to offer the Done button for, or null if the current stage has no checklist,
+    // the checklist isn't fully filled in yet, or there's no next stage to move to.
+    private StageSummary? DoneNextStage()
+    {
+        if (_selectedItem is null || _selectedStageId is null) return null;
+        if (_stages!.FirstOrDefault(s => s.Id == _selectedStageId) is not { Checklist.Count: > 0 } stage) return null;
+        if (!stage.Checklist.All(f => _selectedItem.Data.TryGetPropertyValue(f, out var v) && v is not null)) return null;
+        return NextStage(stage.Id);
     }
 
     private bool _movingStage;
