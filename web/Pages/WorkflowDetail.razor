@@ -322,11 +322,21 @@ else
         }
     }
 
-    // Only the fields whose last-written stage matches the one being viewed (2026-10-25: user
-    // wanted the Intake stage view to show intake-time fields only, not a scheduling field that
-    // was set later while the job sat at Scheduling).
-    private IEnumerable<KeyValuePair<string, JsonNode?>> ItemFieldsForStage(ItemSummary item, string? stageId) =>
-        ItemFields(item).Where(kv => _fieldStage.TryGetValue(kv.Key, out var s) && s == stageId);
+    // A field shows under a stage if either: it's on that stage's own checklist (regardless of
+    // when it was actually written -- 2026-11-06: a field is routinely filled in one message
+    // before the user confirms moving to the stage it belongs to, e.g. "scheduled_at" typed while
+    // still in Intake, right before confirming the move to Scheduling, so it got Intake-tagged
+    // and never showed under Scheduling despite Scheduling's own checklist marking it done); or
+    // it was last written while that stage was active and isn't on any checklist, i.e. an ad-hoc
+    // field with no declared home stage (2026-10-25: the original behavior, still wanted for
+    // those -- an Intake-only field set later while sitting at Scheduling shouldn't show there).
+    private IEnumerable<KeyValuePair<string, JsonNode?>> ItemFieldsForStage(ItemSummary item, string? stageId)
+    {
+        var checklist = _stages?.FirstOrDefault(s => s.Id == stageId)?.Checklist ?? [];
+        return ItemFields(item).Where(kv =>
+            checklist.Contains(kv.Key) ||
+            (_fieldStage.TryGetValue(kv.Key, out var s) && s == stageId));
+    }
 
     private string StageTitle(string? stageId) =>
         Capitalize((_stages?.FirstOrDefault(s => s.Id == stageId)?.Title ?? stageId ?? "").Replace('_', ' '));
