@@ -62,6 +62,14 @@ html, body {
   min-width: 0;
 }
 
+.page-header-chat {
+  /* The grid centers this auto-sized column between the two flexible 1fr columns, but the
+     Chat button itself defaults to block/left alignment within it, which reads as the whole
+     header being left-skewed rather than centered (2026-11-07). */
+  display: flex;
+  justify-content: center;
+}
+
 .page-header-back .back-link {
   margin-bottom: 0;
 }
