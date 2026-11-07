@@ -1,29 +1,28 @@
 # Progress
 
-- Status (2026-11-03): backend (Phases 0–4b) and the Blazor WASM UI are both built and
-  working, with Google OAuth + the chat/agent-loop path verified live against cloud
-  Supabase. GitHub Pages deploy is built and committed but **not yet live** — see below.
-- This session: ran the new plan-pipeline skill (`.claude/skills/plan-pipeline/`, agents in
-  `.claude/agents/`) end to end for the first time, producing
-  `plans/github-pages-deploy/final-plan.md`, then implemented it:
-  - Fixed 3 absolute-path bugs (`Home.razor`, `WorkflowDetail.razor`, `app.css`) that would
-    break once the app is served from a subpath instead of `/`.
-  - Added `.github/workflows/deploy-pages.yml` (build + deploy to Pages, rewrites
-    `<base href>` in CI to the Pages base path), `web/wwwroot/404.html` + a decoder in
-    `index.html` (rafgraph SPA-redirect trick, so deep links survive a hard refresh).
-  - Enabled GitHub Pages on the repo (Source: GitHub Actions) via `gh api`. Target URL:
-    `https://datasciguycode.github.io/workflow-engine/`.
-  - User added the Pages URL to Supabase Auth → Redirect URLs and updated Site URL to match.
-- **Blocked / not yet live:** `git push` is rejected — `refusing to allow an OAuth App to
-  create or update workflow .github/workflows/deploy-pages.yml without workflow scope`. The
-  local `gh` token only has `gist`, `read:org`, `repo`. User needs to run
-  `gh auth refresh -h github.com -s workflow` to add it, but is currently stuck mid-flow: a
-  GitHub account-verification code (2FA or new-device check) isn't arriving by SMS/email.
-  Troubleshooting suggested (check spam, check for an authenticator-app code instead,
-  check githubstatus.com) but unresolved as of this milestone.
-- Next step once unblocked: `git push origin main` (6 commits ahead — the Pages deploy work
-  plus the plan-pipeline skill/plan trail), then verify the live site per
-  `plans/github-pages-deploy/final-plan.md` Step 8's checklist (app boots, sign-in
-  round-trips, deep-link refresh works, `/nope` renders Blazor's NotFound not GitHub's 404).
-- Outstanding: nothing uncommitted. All 6 unpushed commits are real, finished work — not
-  held back intentionally, just blocked on the GitHub auth scope issue above.
+- Status (2026-11-07): live and working. Blazor WASM app deployed to GitHub Pages
+  (`https://datasciguycode.github.io/workflow-engine/`), backed by Supabase (cloud project
+  `workflow-engine-test`, ref `utwyvtbzesswpoihmlic`) for data and the `agent-loop` Edge
+  Function for chat. Google OAuth sign-in works end to end. User tests primarily via an
+  iPhone Home Screen icon (standalone PWA mode).
+- Deploy paths (two, separate):
+  - App/UI: push to `main` (path-filtered to `web/**`) triggers
+    `.github/workflows/deploy-pages.yml` → GitHub Pages.
+  - Agent behavior: `supabase functions deploy agent-loop`, run manually from the CLI —
+    not triggered by git push.
+- Recent UI work (most recent commit `7150837`): job/stage list styling as links with
+  arrows, a "Complete Stage" button next to Send for one-tap stage advancement, fixes for
+  raw snake_case stage/field names rendering in the UI and in the agent's own chat replies,
+  human-readable date/time formatting for date-ish fields, New Job screen no longer leaking
+  old chat history, and a build-id-based one-time forced reload to kill recurring
+  stale-cache complaints on iOS standalone mode (GitHub Pages' real `cache-control` header
+  was overriding the page's own no-cache meta tags).
+- Multi-user: added a second account member this session —
+  `threadsinc1@gmail.com` as `member` on account `11111111-1111-1111-1111-111111111111`
+  ("Acct 1 (isolation test)"), which owns the real "Joe's Auto Repair" workflow/jobs. This
+  was done directly via `supabase db query --linked` (no admin UI exists yet for adding
+  users — it's a manual two-step: the person signs in once via Google to create their
+  `auth.users` row, then an existing account owner inserts their `account_members` row).
+- Outstanding: nothing uncommitted; working tree clean. No admin UI for account/member
+  management — still requires a direct DB query if more users need to be added.
+- Next concrete step: none pending; whatever the user raises next.
