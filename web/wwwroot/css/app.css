@@ -5,6 +5,12 @@
 
 html, body {
   margin: 0;
+  /* .content below already clips its own overflow, but that only catches overflow that
+     stays within .content's own box -- an element that forces a wider intrinsic layout
+     upstream (e.g. the header grid's auto-sized middle column) can still push the whole
+     page wider than the viewport, which without this shows up as text running off the
+     right edge instead of wrapping (2026-11-07). This is the root-level backstop. */
+  overflow-x: hidden;
 }
 
 .content {

@@ -901,9 +901,13 @@ delete or pause the Supabase project from the dashboard; delete the new OAuth cl
   moves the job forward for whoever picks it up next). What's missing is lighter-weight: an
   `assigned_to` field on `items` (nullable — unassigned = open for anyone), a "claim this job"
   action, a "hand off to [coworker]" action, and optionally a "my jobs" vs. "all jobs" UI filter.
-  Fits the existing agent-loop tool pattern well — an `assign_item` tool alongside
-  `create_item`/`move_stage`/`update_data`/`add_note` would be a natural, small addition. No RLS
-  or schema-security change needed, just a new nullable column + UI/tool surface. Smaller in
+  Refined further 2026-11-07: assignment could also happen at intake time, not just via a later
+  claim — the agent could ask "who's taking this one?" (or default to whoever's running intake)
+  as part of `create_item`, so a job can start assigned rather than always starting open. Fits
+  the existing agent-loop tool pattern well — an `assign_item` tool (usable both at creation and
+  later for hand-off) alongside `create_item`/`move_stage`/`update_data`/`add_note` would be a
+  natural, small addition. No RLS or schema-security change needed, just a new nullable column +
+  UI/tool surface. Smaller in
   scope than the earlier per-user-isolation framing (discarded) — revisit once Falcon or another
   account actually has multiple workers sharing a job queue.
 - **Upcoming-appointments list on the intake screen.** Raised 2026-11-07. Show the next 10
