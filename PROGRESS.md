@@ -42,6 +42,17 @@
   - A Notes section on the job overview page, reading back every `add_note` call (previously
     write-only) — plus a soft nudge in the prompt: past 5 messages in one job+stage, the
     agent is told to prefer `add_note` over continuing to just talk about something.
+  - An `agent_events` table (prod-only migration, not yet ported here) logging per-call
+    token usage and tool/loop errors — gives real cost visibility instead of guessing.
+- **Already applied to THIS repo's database directly** (infra, not app code, so no commit
+  needed): `alter default privileges in schema public revoke all on tables from anon,
+  authenticated;` — this project has (had) a platform-level Postgres default that granted
+  `anon`/`authenticated` full privileges on any newly-created table automatically (caught
+  when prod's new `agent_events` table came in wide open despite its migration only granting
+  `select, insert`; this repo's existing tables already had their own grants manually
+  corrected at some point in the past — same root cause, never fixed at the source until
+  now). Future tables in both this project and prod's now start locked down by default. RLS
+  was never actually bypassable either way; this just removes a recurring manual-fix step.
 - **Deferred follow-ups** (full detail in `plans/prod-instance-setup/final-plan.md` →
   "Out of scope (deliberate)"): an admin UI for accounts/members, photo-to-field extraction
   (e.g. VIN from a photo), an upcoming-appointments list on the intake screen (separate from
