@@ -83,7 +83,10 @@ else
                 <FluentStack Orientation="Orientation.Vertical" VerticalGap="8" Style="margin-bottom:12px;">
                     @foreach (var (item, when) in upcoming)
                     {
-                        <div style="opacity:0.85;">
+                        @* VerticalGap alone doesn't reliably produce visible spacing in this
+                           FluentUI version (same issue hit on Notes/Chat), hence the explicit
+                           margin here too (2026-11-10). *@
+                        <div style="opacity:0.85; margin-bottom:12px;">
                             <div>Job #@JobNumber(item) &mdash; @when.ToString("MMM d, h:mm tt", System.Globalization.CultureInfo.InvariantCulture)</div>
                             <div>@ItemTitle(item)</div>
                         </div>
@@ -148,7 +151,7 @@ else
             <FluentStack Orientation="Orientation.Vertical" VerticalGap="8" Style="margin-bottom:12px;">
                 @foreach (var (item, when) in upcomingAtIntake)
                 {
-                    <div style="opacity:0.85;">
+                    <div style="opacity:0.85; margin-bottom:12px;">
                         <div>Job #@JobNumber(item) &mdash; @when.ToString("MMM d, h:mm tt", System.Globalization.CultureInfo.InvariantCulture)</div>
                         <div>@ItemTitle(item)</div>
                     </div>
