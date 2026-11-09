@@ -133,6 +133,28 @@ else
                 </FluentStack>
             }
         }
+
+        @* Read-only lookup for whoever is taking the call (2026-11-10): Intake never writes
+           scheduled_at itself (that still only happens once a job reaches Scheduling), so this
+           just surfaces the same upcoming-appointments view early, before a job even exists. *@
+        var upcomingAtIntake = UpcomingAppointments().ToList();
+        <h2>Other Appointments:</h2>
+        @if (upcomingAtIntake.Count == 0)
+        {
+            <p style="opacity:0.6;">No upcoming appointments scheduled.</p>
+        }
+        else
+        {
+            <FluentStack Orientation="Orientation.Vertical" VerticalGap="8" Style="margin-bottom:12px;">
+                @foreach (var (item, when) in upcomingAtIntake)
+                {
+                    <div style="opacity:0.85;">
+                        <div>Job #@JobNumber(item) &mdash; @when.ToString("MMM d, h:mm tt", System.Globalization.CultureInfo.InvariantCulture)</div>
+                        <div>@ItemTitle(item)</div>
+                    </div>
+                }
+            </FluentStack>
+        }
     }
     else
     {
