@@ -30,11 +30,12 @@
 - **Default-privileges fix** already applied directly to both projects' databases (infra, no
   commit needed): `alter default privileges in schema public revoke all on tables from anon,
   authenticated;` — future tables in either project now start locked down by default.
-- **Planned, not started: scope the Jobs-page chat to the job actually open.** Dev's chat box
-  is still visible on the bare Jobs list even before "+ New Job" is clicked, and the queue
-  sent with every request still lists every job regardless of whether one is already open —
-  the agent-grounding fix above makes mistargeting server-side-safe even so, but the queue
-  itself hasn't been scoped down the way prod's was.
+- **Resolved (was listed as a gap, turned out already fixed by the port):** scoping the
+  Jobs-page chat to the job actually open. The wholesale copy of prod's `WorkflowDetail.razor`
+  during the 2026-11-09 port brought this along too — the chat box no longer renders at all on
+  the bare Jobs list (gated on `_newJobMode || _selectedItem is not null`), and the other-jobs
+  reference queue sent with every agent request is now always empty (`queueForThisTurn = new
+  JsonArray()`), regardless of what's open.
 - **Deferred follow-ups** (full detail in `plans/prod-instance-setup/final-plan.md` →
   "Out of scope (deliberate)"): an admin UI for accounts/members, photo-to-field extraction
   (e.g. VIN from a photo), an upcoming-appointments list on the intake screen (separate from
