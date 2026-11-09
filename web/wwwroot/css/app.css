@@ -132,7 +132,11 @@ html, body {
   line-height: 1.45;
 }
 
-fluent-text-area {
+fluent-textarea {
+  /* The rendered class is "fluent-textarea" (no second hyphen) -- the old "fluent-text-area"
+     selector here never matched anything, so this width/box-sizing contract silently never
+     applied, which is why the Send-button row below (063bb45) still didn't line up with the
+     textbox's real right edge despite explicitly mirroring this rule (2026-11-08). */
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;

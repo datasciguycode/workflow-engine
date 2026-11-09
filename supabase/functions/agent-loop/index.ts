@@ -26,7 +26,12 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
 const MODEL = "claude-sonnet-5-5";
 
-type QueueEntry = { number: number; item_id: string; label?: string };
+// job_number is the UI's stable, permanent per-workflow identifier (shown on screen as "Job #N"),
+// distinct from `number`, which is this queue's own display-order numbering ("number one" = top
+// of the Jobs list right now, per the 2026-10-16 redesign) -- kept separate on purpose. job_number
+// lets the model resolve a user saying "job 2" / "job #2" to the right item_id even when that
+// differs from both queue position and which job is currently open.
+type QueueEntry = { number: number; job_number?: number; item_id: string; label?: string };
 
 type RequestBody = {
   workflow_id: string;
@@ -39,6 +44,17 @@ type RequestBody = {
   selected_item_id?: string;
   selected_item_label?: string;
   selected_stage_title?: string;
+  // Raw id of the stage drilled into, if any -- distinct from selected_stage_title (display-only).
+  // add_note needs the real id to tag a note the same way the UI's own "Save as note" checkbox
+  // does: that stage's id when one is open, or omitted for a job-level note made from the job
+  // overview page (2026-11-08).
+  selected_stage_id?: string;
+  selected_job_number?: number;
+  // Count of the user's own messages sent in this exact job+stage so far (including this one).
+  // Past a threshold, the system prompt nudges the agent to capture further detail via add_note
+  // instead of letting it accumulate as raw chat text (2026-11-07) -- notes are plain stored
+  // text, never replayed into later requests, so they don't grow token cost the way chat does.
+  selected_stage_message_count?: number;
 };
 
 // Thin wrapper around PostgREST, forwarding the CALLER's own JWT (not the service role key) so
@@ -60,6 +76,25 @@ async function restFetch(path: string, jwt: string, body?: unknown) {
     throw new Error(`${path} failed (${res.status}): ${JSON.stringify(json)}`);
   }
   return json;
+}
+
+// Writes a row to agent_events (usage or error), best-effort -- a logging failure should never
+// break the actual chat/tool-call response, so this swallows its own errors (2026-11-08).
+async function logAgentEvent(
+  jwt: string,
+  workflowId: string,
+  itemId: string | undefined,
+  patch: Record<string, unknown>,
+) {
+  try {
+    await restFetch("/agent_events", jwt, {
+      workflow_id: workflowId,
+      item_id: itemId ?? null,
+      ...patch,
+    });
+  } catch (_e) {
+    // best-effort telemetry; intentionally not surfaced
+  }
 }
 
 async function fetchStages(workflowId: string, jwt: string) {
@@ -100,39 +135,39 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "move_stage",
     description:
-      "Move an existing item to a different stage in its workflow. May be rejected by the workflow's stage-order rules (e.g. a forward skip when enforce_stage_order is true) -- if so, explain the rejection to the user in plain text, don't retry silently.",
+      "Move an existing item to a different stage in its workflow. Omit item_id to target the job currently open in the UI (see the note above the queue) -- only pass item_id explicitly when the user's message clearly names a different job (by queue number, job number, or a distinguishing detail like customer/vehicle). May be rejected by the workflow's stage-order rules (e.g. a forward skip when enforce_stage_order is true) -- if so, explain the rejection to the user in plain text, don't retry silently.",
     input_schema: {
       type: "object",
       properties: {
-        item_id: { type: "string", description: "uuid of the item to move" },
+        item_id: { type: "string", description: "uuid of the item to move; omit to use the job currently open in the UI" },
         to_stage_id: { type: "string", description: "uuid of the destination stage" },
       },
-      required: ["item_id", "to_stage_id"],
+      required: ["to_stage_id"],
     },
   },
   {
     name: "update_data",
     description:
-      "Apply a top-level merge patch to an item's data. Each key in the patch replaces that key's value wholesale; a top-level null deletes that key. Arrays are replaced wholesale, never appended -- to add to an array field, include the whole new array (read-modify-write).",
+      "Apply a top-level merge patch to an item's data. Omit item_id to target the job currently open in the UI (see the note above the queue) -- only pass item_id explicitly when the user's message clearly names a different job (by queue number, job number, or a distinguishing detail like customer/vehicle); this matters even if a different job was discussed earlier in the conversation -- a message with no job reference, while one job is open in the UI, always means that open job. Each key in the patch replaces that key's value wholesale; a top-level null deletes that key. Arrays are replaced wholesale, never appended -- to add to an array field, include the whole new array (read-modify-write).",
     input_schema: {
       type: "object",
       properties: {
-        item_id: { type: "string" },
+        item_id: { type: "string", description: "uuid of the item to update; omit to use the job currently open in the UI" },
         patch: { type: "object" },
       },
-      required: ["item_id", "patch"],
+      required: ["patch"],
     },
   },
   {
     name: "add_note",
-    description: "Add a free-text note to an item's history. Does not change the item's data.",
+    description: "Add a free-text note to an item's history, shown to the user in the UI's own Notes section. Does not change the item's data. Prefer this over just replying in chat for any detailed commentary, context, or explanation that doesn't map to a checklist field or a direct instruction -- notes are the durable record for that kind of detail; chat is for short back-and-forth. Omit item_id to target the job currently open in the UI (see the note above the queue) -- only pass item_id explicitly when the user's message clearly names a different job. The note is automatically tagged with whichever stage (if any) is currently drilled into in the UI -- a job-level note vs. a stage-specific one is decided entirely by where the user is looking, not by anything you choose here.",
     input_schema: {
       type: "object",
       properties: {
-        item_id: { type: "string" },
+        item_id: { type: "string", description: "uuid of the item to note; omit to use the job currently open in the UI" },
         note: { type: "string" },
       },
-      required: ["item_id", "note"],
+      required: ["note"],
     },
   },
 ];
@@ -142,7 +177,18 @@ async function callTool(
   input: Record<string, unknown>,
   workflowId: string,
   jwt: string,
+  selectedItemId: string | undefined,
+  selectedStageId: string | undefined,
 ) {
+  // For every tool that targets an existing item, the model may omit item_id to mean "the job
+  // currently open in the UI" -- resolved HERE, server-side, from the request body's own
+  // selected_item_id, not from anything the model inferred. This is the actual fix for a real
+  // 2026-11-07 bug: with a full, unscoped conversation history, the model picked a *different*,
+  // more recently-discussed job over the one actually open on screen, even though the system
+  // prompt named it. Making the common case a deterministic server-side default (rather than a
+  // model free-choice every time) removes that failure mode for any call where the model follows
+  // the tool description's instruction to omit item_id by default.
+  const itemId = (input.item_id as string | undefined) ?? selectedItemId;
   switch (name) {
     case "create_item":
       return await restFetch("/rpc/create_item", jwt, {
@@ -150,19 +196,27 @@ async function callTool(
         p_data: input.data ?? {},
       });
     case "move_stage":
+      if (!itemId) throw new Error("no job is open in the UI and no item_id was given");
       return await restFetch("/rpc/move_stage", jwt, {
-        p_item_id: input.item_id,
+        p_item_id: itemId,
         p_to_stage_id: input.to_stage_id,
       });
     case "update_data":
+      if (!itemId) throw new Error("no job is open in the UI and no item_id was given");
       return await restFetch("/rpc/update_data", jwt, {
-        p_item_id: input.item_id,
+        p_item_id: itemId,
         p_patch: input.patch,
       });
     case "add_note":
+      if (!itemId) throw new Error("no job is open in the UI and no item_id was given");
+      // Only tag the note with selectedStageId when the note is actually about the job that's
+      // open in the UI (itemId fell through to selectedItemId, i.e. the model omitted item_id).
+      // An explicit item_id naming some OTHER job has no known stage context here without an
+      // extra lookup, so that note lands as job-level (null) rather than guessing a stage.
       return await restFetch("/rpc/add_note", jwt, {
-        p_item_id: input.item_id,
+        p_item_id: itemId,
         p_note: input.note,
+        p_stage_id: input.item_id ? null : (selectedStageId ?? null),
       });
     default:
       throw new Error(`unknown tool: ${name}`);
@@ -175,9 +229,33 @@ function systemPrompt(
   selectedItemId?: string,
   selectedItemLabel?: string,
   selectedStageTitle?: string,
+  selectedJobNumber?: number,
+  selectedStageMessageCount?: number,
 ) {
+  // Restated close to every turn (this whole prompt is rebuilt fresh each request) and reinforced
+  // by move_stage/update_data/add_note's own tool descriptions, because a full unscoped message
+  // history can otherwise make an earlier, more recently-discussed job feel more salient than
+  // this one-line reminder -- a real failure mode observed 2026-11-07 (the agent wrote a new
+  // appointment's date onto a different job that had just been created/discussed, instead of the
+  // job actually open in the UI). The job number (if present) gives the model and the user a
+  // shared, unambiguous way to refer to this exact job even when its label is generic.
+  // Nudges the agent to capture further detail as a note instead of letting the conversation run
+  // long -- notes are plain stored text the UI reads back directly, never replayed into later
+  // requests, so they don't add token cost to every subsequent message in this stage the way
+  // continued chat does. Deliberately a soft nudge in the model's own phrasing, not a disabled
+  // input box -- a hard block risks stopping someone mid-task right when they need one more
+  // exchange (2026-11-07).
+  const noteNudge = (selectedStageMessageCount ?? 0) >= 5
+    ? ` This stage's chat has already run ${selectedStageMessageCount} messages long. From here, prefer add_note over continuing to just talk about something -- if the user gives more free-form detail or commentary that isn't a direct instruction or a checklist-field value, save it with add_note and say so briefly, rather than only replying in chat.`
+    : "";
+  // selectedStageTitle is only set once a stage is actually drilled into -- the job overview page
+  // (item selected, no stage) also has its own chat box now (2026-11-08), so this can't assume a
+  // stage is always present just because an item is.
+  const stageContext = selectedStageTitle
+    ? `drilled into its "${selectedStageTitle}" stage's own view`
+    : "on its own overview page (no particular stage drilled into)";
   const selectedContext = selectedItemId
-    ? `\nThe user currently has this job open in the UI, drilled into its "${selectedStageTitle ?? "unknown"}" stage's own view: "${selectedItemLabel ?? selectedItemId}" (id ${selectedItemId}). Default to this job for any message that doesn't clearly name a different one -- the user is looking at it, so don't ask "which job?" just because other jobs also exist in the queue below. Only ask for clarification if the message itself points elsewhere (e.g. names a different customer/vehicle) or there's no job open at all.\n`
+    ? `\nTHE USER IS CURRENTLY LOOKING AT ONE SPECIFIC JOB: Job #${selectedJobNumber ?? "?"}, "${selectedItemLabel ?? selectedItemId}" (id ${selectedItemId}), ${stageContext}. For move_stage, update_data, and add_note: omit item_id entirely to target this job -- that is the default and correct choice for any message that doesn't clearly name a different job, REGARDLESS of which other jobs were created or discussed earlier in this same conversation. Only pass an explicit item_id when the user's current message itself names a different job (by job number, queue number, or a distinguishing detail like customer/vehicle) or asks to act on a job other than this one. Don't ask "which job?" just because other jobs also exist in the queue below -- the open one always wins unless the message says otherwise. A note added here is automatically tagged with the stage named above, if any -- it's a job-level note (no stage) when the user is on the overview page.${noteNudge}\n`
     : "";
   return `You are a workflow assistant for a mechanic-shop / task-tracking app. You act on the user's spoken-or-typed instructions using the tools available to you.
 
@@ -192,12 +270,16 @@ in create_item's initial data) using that exact key -- the UI shows each stage's
 done/not-done by checking for that key in the item's data, so a note-only add_note call for it
 won't show as done even though you recorded it somewhere.
 ${selectedContext}
-Reference queue -- items recently mentioned or created in this conversation, numbered by order of mention (the user may say "number one", "the second one", etc. instead of a name):
+Reference queue -- items recently mentioned or created in this conversation, numbered by order of mention (the user may say "number one", "the second one", etc. instead of a name). Each entry also carries job_number, the SAME permanent "Job #N" number shown on screen for that job (different from this queue's own position-based numbering) -- use job_number when the user says "job 2" / "job #2" meaning the on-screen number, not the queue's "number one"/"the second one" convention. ${
+    selectedItemId
+      ? "Deliberately EMPTY right now because a specific job is open in the UI (above) -- act on that job alone; don't reference, compare to, or guess at other jobs by name even if they came up earlier in this conversation. This is expected, not an error."
+      : "Populated because no specific job is open right now."
+  }
 ${JSON.stringify(queue)}
 
 Rules:
 - Stage titles above are stored as snake_case ids (e.g. "in_progress", "payment_receipt_submitted"). When mentioning a stage in your reply, write it with spaces instead of underscores (e.g. "in progress", "payment receipt submitted") -- never show the raw underscored form to the user.
-- The user may refer to an item by its queue number, or by a descriptive name/detail (e.g. "the Civic").
+- The user may refer to an item by its queue number, its job number, or a descriptive name/detail (e.g. "the Civic").
 - When a message reads like a task or request (e.g. "Fix Bob's engine," "Replace the brake pads"), default to treating it as the job's own description -- something to track, not an instruction for you to carry out yourself. Only treat it as a literal instruction to you when it's clearly addressed to you as the assistant (e.g. "move this to diagnosis," "add a note that..."). If genuinely ambiguous, ask which one they mean before proposing a tool call -- but first check whether the job currently open in the UI (above, if any) already resolves the ambiguity.
 - When creating a job from a request like that, don't use the raw request text as the title -- see create_item's description for how to split title vs. description.
 - Act immediately -- the user's message is already visible on screen, so there's no need to restate what you're about to do and wait for a separate "yes" before calling a tool. Call the tool as soon as the instruction (or job-creation/move request) is clear; only ask first if it's genuinely ambiguous which item or stage is meant (see above).
@@ -293,6 +375,8 @@ Deno.serve(async (req) => {
           body.selected_item_id,
           body.selected_item_label,
           body.selected_stage_title,
+          body.selected_job_number,
+          body.selected_stage_message_count,
         ),
         tools: TOOLS,
         thinking: { type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } },
@@ -303,6 +387,12 @@ Deno.serve(async (req) => {
     );
 
     messages.push({ role: "assistant", content: response.content });
+
+    await logAgentEvent(jwt, body.workflow_id, body.selected_item_id, {
+      event_type: "usage",
+      input_tokens: response.usage.input_tokens,
+      output_tokens: response.usage.output_tokens,
+    });
 
     const toolUses = response.content.filter(
       (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
@@ -324,6 +414,8 @@ Deno.serve(async (req) => {
           toolUse.input as Record<string, unknown>,
           body.workflow_id,
           jwt,
+          body.selected_item_id,
+          body.selected_stage_id,
         );
         toolResults.push({
           type: "tool_result",
@@ -331,6 +423,11 @@ Deno.serve(async (req) => {
           content: JSON.stringify(result),
         });
       } catch (e) {
+        const toolItemId = (toolUse.input as Record<string, unknown>).item_id as string | undefined;
+        await logAgentEvent(jwt, body.workflow_id, toolItemId ?? body.selected_item_id, {
+          event_type: "error",
+          error_message: `${toolUse.name}: ${e}`,
+        });
         toolResults.push({
           type: "tool_result",
           tool_use_id: toolUse.id,
@@ -342,6 +439,10 @@ Deno.serve(async (req) => {
     messages.push({ role: "user", content: toolResults });
   }
   } catch (e) {
+    await logAgentEvent(jwt, body.workflow_id, body.selected_item_id, {
+      event_type: "error",
+      error_message: `agent loop failed: ${e}`,
+    });
     return new Response(JSON.stringify({ error: `agent loop failed: ${e}` }), {
       status: 502,
       headers: corsHeaders,

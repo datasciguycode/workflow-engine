@@ -13,7 +13,10 @@ namespace WorkflowApp.Web.Services;
 // every time; GetValidAccessTokenAsync transparently refreshes the token when it's near expiry.
 public class AuthState
 {
-    private const string StorageKey = "workflow-app.auth-session";
+    // Scoped per Supabase project: dev and prod Pages share the datasciguycode.github.io origin,
+    // so a fixed key would let each environment overwrite (and sign out) the other's session.
+    private static readonly string StorageKey =
+        "workflow-app.auth-session." + new Uri(SupabaseConfig.ApiUrl).Host.Split('.')[0];
 
     private readonly NavigationManager _nav;
     private readonly IJSRuntime _js;

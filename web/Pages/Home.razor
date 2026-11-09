@@ -31,7 +31,7 @@ else
         @foreach (var wf in _workflows)
         {
             <FluentCard Class="clickable-card" @onclick="() => Open(wf.Id)" style="padding:16px; border-radius:var(--app-radius);">
-                <h4 style="margin:0;">@wf.Name</h4>
+                <h4 style="margin:0;"><strong style="color:var(--app-accent);">@wf.Name &rarr;</strong></h4>
             </FluentCard>
         }
     </FluentStack>

@@ -35,7 +35,11 @@ else
             }
         </div>
         <div class="page-header-chat">
-            @if (_selectedItem is null || _selectedStageId is not null)
+            @* Hidden on the bare Jobs list (2026-11-08): chat should only ever create a job or
+               act on one you've actually opened, never reference another job by name/number
+               from the list -- so it only appears once "+ New Job" is clicked, or once a job
+               (overview or a specific stage) is open. *@
+            @if (_newJobMode || _selectedItem is not null)
             {
                 <FluentButton Appearance="ButtonAppearance.Primary" @onclick="FocusChatInput">
                     &#128172; Chat
@@ -49,7 +53,7 @@ else
 
     @if (_selectedStageId is not null && _selectedItem is not null)
     {
-        <h1 style="overflow-wrap:anywhere; word-break:break-word;">@StageTitle(_selectedStageId)</h1>
+        <h1 style="overflow-wrap:anywhere; word-break:break-word;">Job #@JobNumber(_selectedItem) &mdash; @StageTitle(_selectedStageId)</h1>
         @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId) is { Checklist.Count: > 0 } selectedStage)
         {
             <FluentStack Orientation="Orientation.Vertical" VerticalGap="2" Style="margin-bottom:12px;">
@@ -66,10 +70,31 @@ else
                 <span class="field-key">@ChecklistLabel(key):</span> @FieldText(key, value)
             </div>
         }
+        @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("scheduled_at") == true)
+        {
+            var upcoming = UpcomingAppointments().ToList();
+            <h2>Other Appointments:</h2>
+            @if (upcoming.Count == 0)
+            {
+                <p style="opacity:0.6;">No upcoming appointments scheduled.</p>
+            }
+            else
+            {
+                <FluentStack Orientation="Orientation.Vertical" VerticalGap="8" Style="margin-bottom:12px;">
+                    @foreach (var (item, when) in upcoming)
+                    {
+                        <div style="opacity:0.85;">
+                            <div>Job #@JobNumber(item) &mdash; @when.ToString("MMM d, h:mm tt", System.Globalization.CultureInfo.InvariantCulture)</div>
+                            <div>@ItemTitle(item)</div>
+                        </div>
+                    }
+                </FluentStack>
+            }
+        }
     }
     else if (_selectedItem is not null)
     {
-        <h1>Job</h1>
+        <h1>Job #@JobNumber(_selectedItem)</h1>
         <h2>Stages</h2>
         <FluentStack Orientation="Orientation.Vertical" VerticalGap="6">
             @foreach (var stage in _stages.OrderBy(s => s.SequenceOrder ?? int.MaxValue))
@@ -112,20 +137,54 @@ else
     else
     {
         <h1>@ItemLabelPlural</h1>
-        <FluentStack Orientation="Orientation.Vertical" VerticalGap="8">
-            @for (var i = 0; i < _items.Count; i++)
+        <FluentLink @onclick="StartNewJob" Class="back-link">+ New @ItemLabelSingular</FluentLink>
+
+        @* Tap-to-search (2026-11-08): no live-as-you-type filtering, so searching never fires a
+           request per keystroke -- the box just holds text until Search is tapped, and runs
+           server-side via search_items (matches job data, stage title, and job number; see
+           that migration) rather than filtering the already-loaded _items client-side. *@
+        <div style="display:flex; gap:8px; margin-top:12px; align-items:flex-start;">
+            <FluentTextInput @bind-Value="_searchQuery" Placeholder="Search jobs..." Style="flex:1;"
+                              @onkeyup="@(async (KeyboardEventArgs e) => { if (e.Key == "Enter") await RunSearch(); })" />
+            <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@_searching" @onclick="RunSearch">
+                @(_searching ? "..." : "Search")
+            </FluentButton>
+            @if (_searchResults is not null)
             {
-                var item = _items[i];
-                var number = i + 1;
-                <FluentCard Class="clickable-card" style="padding:14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius);" @onclick="() => SelectItem(item)">
-                    <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                        <strong style="color:var(--app-accent);">@number. @ItemTitle(item) &rarr;</strong>
-                    </div>
-                    <div style="opacity:0.7; margin-top:2px;">Stage: @StageTitle(item.StageId)</div>
-                </FluentCard>
+                <FluentButton @onclick="ClearSearch">Clear</FluentButton>
             }
-            <FluentLink @onclick="StartNewJob" Class="back-link">+ New @ItemLabelSingular</FluentLink>
-        </FluentStack>
+        </div>
+
+        @if (_searchResults is not null)
+        {
+            <p style="opacity:0.6; margin-top:8px;">@_searchResults.Count result(s) for "@_searchQuery"</p>
+            <FluentStack Orientation="Orientation.Vertical" VerticalGap="8" Style="margin-top:8px;">
+                @foreach (var result in _searchResults)
+                {
+                    var item = new ItemSummary(result.Id, result.StageId, result.Data, result.CreatedAt);
+                    <FluentCard Class="clickable-card" style="padding:14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius);" @onclick="() => SelectItem(item)">
+                        <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
+                            <strong style="color:var(--app-accent);">#@result.JobNumber @ItemTitle(item) &rarr;</strong>
+                        </div>
+                        <div style="opacity:0.7; margin-top:2px;">Stage: @StageTitle(item.StageId)</div>
+                    </FluentCard>
+                }
+            </FluentStack>
+        }
+        else
+        {
+            <FluentStack Orientation="Orientation.Vertical" VerticalGap="8" Style="margin-top:12px;">
+                @foreach (var item in _items)
+                {
+                    <FluentCard Class="clickable-card" style="padding:14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius);" @onclick="() => SelectItem(item)">
+                        <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
+                            <strong style="color:var(--app-accent);">#@JobNumber(item) @ItemTitle(item) &rarr;</strong>
+                        </div>
+                        <div style="opacity:0.7; margin-top:2px;">Stage: @StageTitle(item.StageId)</div>
+                    </FluentCard>
+                }
+            </FluentStack>
+        }
     }
 
     @if (_selectedStageId is null && _selectedItem is not null)
@@ -141,21 +200,34 @@ else
         </FluentStack>
     }
 
-    @* No chat box on the job's own overview page (item selected, no stage drilled in) --
-       2026-11-04: intake-style details go on the stage that's actually gathering them, and
-       update_data always tags a field by the item's real current stage regardless of which view
-       you typed from, so having a second chat box here just let the same data be entered from
-       two places with no clear reason to prefer either. Stage-specific chat now only lives on
-       the stage's own drilled-in view below; the Jobs list above keeps its box for creating jobs. *@
-    @if (_selectedItem is null || _selectedStageId is not null)
+    @* The job overview page gets its own chat box again (2026-11-08) -- reversing 2026-11-04's
+       removal, now that notes can be tagged job-level (no stage) vs. stage-level: the overview
+       page is where a job-level note belongs, so it needs a "Save as note" checkbox and a Send
+       button of its own, not just the stage views.
+       Still no chat box on the bare Jobs list -- it only appears once "+ New Job" is clicked
+       (create-only there) or once a job (overview or a specific stage) is open. See the header
+       button above for the matching condition. *@
+    @if (_newJobMode || _selectedItem is not null)
     {
         <h2>Chat</h2>
 
         @* Autofocus removed 2026-10-30: doesn't open iOS's keyboard anyway (confirmed 2026-10-25),
            but Safari still scroll-jumps the page to bring this box into view on every load, hiding
            the Talk button and back-link above it. The Talk button is the real focus mechanism now. *@
-        <FluentTextArea id="chat-input" @bind-Value="_draft" Rows="2" Style="width:100%;" />
-        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+        @* Stacked and left-aligned, not a row trying to match edges with the textbox below it --
+           the fluent-textarea component's real right edge turned out to not be where its own
+           width:100% box implies (2026-11-08, after the fluent-text-area selector-typo fix still
+           didn't close the gap), so this gives up on lining edges up at all rather than chasing it
+           further. *@
+        @if (_selectedItem is not null)
+        {
+            <FluentCheckbox @bind-Value="_saveAsNote">Save as note</FluentCheckbox>
+        }
+        @* Rows alone (2 -> 3) didn't produce a visible height change -- the fluent-textarea web
+           component doesn't appear to size off its rows attribute reliably, so force the height
+           directly via CSS instead (2026-11-08). *@
+        <FluentTextArea id="chat-input" @bind-Value="_draft" Rows="3" Style="width:100%; min-height:6rem;" />
+        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; margin-bottom:12px;">
             <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@_sending" @onclick="Send">
                 @(_sending ? "Sending..." : "Send")
             </FluentButton>
@@ -167,9 +239,47 @@ else
             }
         </div>
 
+        @* Moved below the text box/buttons, above the chat log (2026-11-08) -- notes used to sit
+           above the chat box and, on a long-running job/stage, pushed the box (and the Complete
+           Stage button) further down the page the more notes piled up. The input now stays right
+           under the heading regardless of notes/log length. Stage view shows that stage's own
+           notes; the job overview page shows job-level (no stage) notes -- see NotesFor(). *@
+        @if (_selectedItem is not null)
+        {
+            <h2>Notes</h2>
+            var notesToShow = NotesFor(_selectedStageId);
+            @if (_notes is null)
+            {
+                <FluentSpinner />
+            }
+            else if (notesToShow.Count == 0)
+            {
+                <p style="opacity:0.6;">No notes yet.</p>
+            }
+            else
+            {
+                @* VerticalGap on FluentStack doesn't reliably produce visible spacing (same issue
+                   as the chat textarea's Rows attribute, 2026-11-08) -- force it with an explicit
+                   margin-bottom on each note instead. *@
+                <FluentStack Orientation="Orientation.Vertical" VerticalGap="20">
+                    @foreach (var note in notesToShow)
+                    {
+                        <div style="margin-bottom:20px;">
+                            <div style="opacity:0.6; font-size:0.85em;">@note.CreatedAt.ToLocalTime().ToString("MMM d, h:mm tt", System.Globalization.CultureInfo.InvariantCulture)</div>
+                            <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">@note.Text</div>
+                        </div>
+                    }
+                </FluentStack>
+            }
+        }
+
         @* Moved below the input (2026-11-06) -- a growing chat log used to push the input (and
            the Complete Stage button) further down the page with every reply, eventually off the
-           visible area. The input now stays right under the heading regardless of log length. *@
+           visible area. The input now stays right under the heading regardless of log length.
+           Its own heading added (2026-11-08) now that Notes sits between the chat box and this
+           log -- without one, the log just ran on under Notes with nothing marking where it
+           starts. *@
+        <h2>Chat History</h2>
         <FluentStack Orientation="Orientation.Vertical" VerticalGap="4">
             @foreach (var line in CurrentChatLog())
             {
@@ -187,6 +297,33 @@ else
     private WorkflowSummary? _workflow;
     private List<StageSummary>? _stages;
     private List<ItemSummary>? _items;
+
+    // Jobs-list search (2026-11-08): tap-to-search, not live-as-you-type -- _searchResults stays
+    // null until Search is tapped, which is also what the Jobs list checks to decide whether to
+    // render _items (nothing searched yet) or these results instead.
+    private string _searchQuery = "";
+    private List<ItemSearchResult>? _searchResults;
+    private bool _searching;
+
+    private async Task RunSearch()
+    {
+        if (string.IsNullOrWhiteSpace(_searchQuery) || _searching) return;
+        _searching = true;
+        try
+        {
+            _searchResults = await Api.SearchItemsAsync(WorkflowId, _searchQuery);
+        }
+        finally
+        {
+            _searching = false;
+        }
+    }
+
+    private void ClearSearch()
+    {
+        _searchQuery = "";
+        _searchResults = null;
+    }
     private string? _error;
 
     // Drill-down state: null/null = Jobs list; item set, stage null = job detail (stages);
@@ -213,7 +350,26 @@ else
     private string ItemLabelPlural => ItemLabelSingular + "s";
     private string _draft = "";
     private bool _sending;
-    private JsonArray _messages = new();
+    private bool _saveAsNote;
+
+    // One Claude-facing conversation per job (keyed by item id; "__general__" covers the Jobs
+    // list / New Job screen, where no item is selected yet) instead of one array for the whole
+    // session -- so a request about Job #9 never resends Jobs #1-8's history, and token cost per
+    // request stays bounded by that one job's own activity (2026-11-07; not scoped further to
+    // per-stage, since cross-stage memory within a job -- e.g. recalling diagnosis notes while
+    // writing the estimate -- was judged more valuable than the extra savings).
+    private readonly Dictionary<string, JsonArray> _messagesByJob = new();
+    private string MessagesKey => _selectedItem?.Id ?? "__general__";
+    private JsonArray CurrentMessages()
+    {
+        if (!_messagesByJob.TryGetValue(MessagesKey, out var arr))
+        {
+            arr = new JsonArray();
+            _messagesByJob[MessagesKey] = arr;
+        }
+        return arr;
+    }
+
     private readonly List<(string Who, string Text, string? ItemId, string? StageId)> _chatLog = new();
 
     protected override async Task OnInitializedAsync()
@@ -243,6 +399,7 @@ else
         "user" => "You",
         "agent" => "Agent",
         "error" => "Error",
+        "note" => "Note",
         _ => who,
     };
 
@@ -251,6 +408,7 @@ else
         "You" => "user",
         "Agent" => "agent",
         "Error" => "error",
+        "Note" => "note",
         _ => displayWho,
     };
 
@@ -277,12 +435,40 @@ else
         key.Contains("time", StringComparison.OrdinalIgnoreCase) ||
         key.EndsWith("_at", StringComparison.OrdinalIgnoreCase);
 
+    // Shown on whichever stage collects scheduled_at (e.g. "scheduling"), so a dispatcher can
+    // see what's already booked while scheduling a new job -- doesn't touch the agent/chat path
+    // at all, just filters/sorts items already fetched for this workflow (2026-11-07).
+    private IEnumerable<(ItemSummary Item, DateTime When)> UpcomingAppointments()
+    {
+        if (_items is null) yield break;
+        var parsed = _items
+            .Where(item => item.Id != _selectedItem?.Id) // don't list the job we're already viewing
+            .Select(item => (
+                Item: item,
+                Parsed: item.Data.TryGetPropertyValue("scheduled_at", out var v) &&
+                    v is JsonValue jv && jv.GetValueKind() == System.Text.Json.JsonValueKind.String &&
+                    DateTime.TryParse(jv.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out var dt)
+                    ? dt : (DateTime?)null))
+            .Where(x => x.Parsed is not null)
+            .OrderBy(x => x.Parsed)
+            .Take(10);
+        foreach (var x in parsed) yield return (x.Item, x.Parsed!.Value);
+    }
+
     private string ItemTitle(ItemSummary item)
     {
         var key = TitleKey(item);
         if (key is not null && item.Data[key] is JsonValue jv) return jv.GetValue<string>();
         return $"{ItemLabelPlural.TrimEnd('s')} {item.Id[..Math.Min(8, item.Id.Length)]}";
     }
+
+    // A stable, permanent per-workflow identifier (unlike the Jobs list's display order, which
+    // tracks updated_at and shifts as jobs get touched). Ranked by created_at ascending; items
+    // are never deleted (no DELETE policy on `items`), so a job's number never changes once
+    // assigned.
+    private int JobNumber(ItemSummary item) =>
+        _items is null ? 0 : _items.OrderBy(i => i.CreatedAt).ToList().FindIndex(i => i.Id == item.Id) + 1;
 
     // No field names can be assumed in general (data is domain-agnostic jsonb), but a field
     // literally named "title" is a real convention the agent itself already uses when it creates
@@ -321,10 +507,22 @@ else
     // have shown it, which is an acceptable gap for old test data.
     private readonly Dictionary<string, string?> _fieldStage = new();
 
+    private List<ItemNote>? _notes;
+
+    // null stageId -> job-level notes (shown on the job overview page); a real stage id ->
+    // that stage's own notes (shown on its drilled-in view). Split by StageId alone, not by
+    // anything else, so a note's home page is decided entirely by where it was saved from
+    // (2026-11-08).
+    private List<ItemNote> NotesFor(string? stageId) =>
+        _notes?.Where(n => n.StageId == stageId).ToList() ?? new List<ItemNote>();
+
     private async Task LoadFieldStageMap(string itemId)
     {
         _fieldStage.Clear();
-        var events = await Api.GetItemEventsAsync(itemId);
+        var eventsTask = Api.GetItemEventsAsync(itemId);
+        var notesTask = Api.GetNotesAsync(itemId);
+        var events = await eventsTask;
+        _notes = await notesTask;
         foreach (var e in events)
         {
             if (e.Data is null) continue;
@@ -368,10 +566,12 @@ else
     // into something readable for display.
     private static string ChecklistLabel(string field) => Capitalize(field.Replace('_', ' '));
 
-    private void SelectItem(ItemSummary item)
+    private async Task SelectItem(ItemSummary item)
     {
         _selectedItem = item;
         _selectedStageId = null;
+        _notes = null; // show the spinner while this item's own notes load, not the last item's
+        await LoadFieldStageMap(item.Id);
     }
 
     private void StartNewJob()
@@ -467,25 +667,74 @@ else
         _draft = "";
         var itemId = _selectedItem?.Id;
         var stageId = _selectedStageId;
+        var messagesKey = MessagesKey;
         var wasNewJobMode = _newJobMode;
         var previousItemCount = _items!.Count;
-        _chatLog.Add(("You", text, itemId, stageId));
         _sending = true;
+
+        // "Save as note" bypasses the agent entirely -- no AI round trip, so there's no more
+        // guessing whether a given message became a note vs. stayed as plain chat; checking the
+        // box makes that decision explicit instead of leaving it to the model's judgment calls
+        // (content-based or the 5-message nudge below). Reset after every send so it has to be
+        // deliberately re-checked for the next message, rather than silently staying on and
+        // turning a later real instruction into a note instead of acting on it (2026-11-08).
+        if (_saveAsNote && itemId is not null)
+        {
+            _saveAsNote = false;
+            try
+            {
+                // Neither shown in the chat log nor persisted to chat_messages -- when saving
+                // as a note, the note itself (visible in the Notes section) is the record, so
+                // the chat has nothing to add (2026-11-08).
+                await Api.AddNoteAsync(itemId, text, stageId);
+                _notes = await Api.GetNotesAsync(itemId);
+            }
+            catch (Exception ex)
+            {
+                _chatLog.Add(("Error", ex.Message, itemId, stageId));
+                await Api.AddChatMessageAsync(WorkflowId, StoredWho("Error"), ex.Message, itemId, stageId);
+            }
+            finally
+            {
+                _sending = false;
+            }
+            return;
+        }
+
+        _chatLog.Add(("You", text, itemId, stageId));
         await Api.AddChatMessageAsync(WorkflowId, StoredWho("You"), text, itemId, stageId);
 
-        _messages.Add(new JsonObject { ["role"] = "user", ["content"] = text });
+        var currentMessages = CurrentMessages();
+        currentMessages.Add(new JsonObject { ["role"] = "user", ["content"] = text });
 
         try
         {
+            // Never send the other-jobs queue (2026-11-08). While a specific job is drilled
+            // into, the agent should act on that job alone -- sending other jobs' names/details
+            // here is how a future name collision (e.g. two different "Bob"s) could get
+            // misapplied, even with the stronger job-grounding fix above. New Job mode has no
+            // legitimate use for it either now that it's the only "no job open" state the chat
+            // box is reachable from (the bare Jobs list no longer has a chat box at all) -- there's
+            // no reason job creation should ever be able to reference an existing job by name or
+            // number. An empty queue means the model has nothing else to reference, period.
+            var queueForThisTurn = new JsonArray();
+            // How many of the user's own messages have been sent in this exact job+stage so far
+            // (including this one) -- lets the agent nudge toward add_note once a stage's chat
+            // runs long, rather than letting detail pile up indefinitely as raw conversation
+            // text that costs tokens on every later message in the same stage (2026-11-07).
+            var stageMessageCount = stageId is null ? (int?)null :
+                _chatLog.Count(l => l.Who == "You" && l.ItemId == itemId && l.StageId == stageId);
             var (reply, messages) = await Api.SendAgentMessageAsync(
-                WorkflowId, BuildQueueJson(), _messages,
+                WorkflowId, queueForThisTurn, currentMessages,
                 selectedItemId: _selectedItem?.Id,
                 selectedItemLabel: _selectedItem is null ? null : ItemTitle(_selectedItem),
-                // Chat only exists on the Jobs list (no item) or a stage's own drilled-in view
-                // (both set) now that the job-overview page has no chat box of its own -- so
-                // _selectedStageId is always set here whenever _selectedItem is.
-                selectedStageTitle: _selectedStageId is not null ? StageTitle(_selectedStageId) : null);
-            _messages = messages;
+                // null on the job overview page (item selected, no stage drilled in) -- that's
+                // what makes an agent-written add_note there land as a job-level note (2026-11-08).
+                selectedStageTitle: _selectedStageId is not null ? StageTitle(_selectedStageId) : null,
+                selectedStageId: _selectedStageId,
+                selectedJobNumber: _selectedItem is null ? null : JobNumber(_selectedItem),
+                selectedStageMessageCount: stageMessageCount);
+            _messagesByJob[messagesKey] = messages;
             _chatLog.Add(("Agent", reply, itemId, stageId));
             await Api.AddChatMessageAsync(WorkflowId, StoredWho("Agent"), reply, itemId, stageId);
             _items = await Api.GetItemsAsync(WorkflowId);
@@ -516,24 +765,4 @@ else
         }
     }
 
-    // The agent's "queue" of nameable references is just the Jobs list itself, numbered by its
-    // current display order (most-recently-updated first, from GetItemsAsync) -- replaces the
-    // separately tracked reference-queue list built earlier the same day (2026-10-16 redesign:
-    // "number one" means position 1 in the one list that's already on screen, nothing separate
-    // to maintain).
-    private JsonArray BuildQueueJson()
-    {
-        var arr = new JsonArray();
-        if (_items is null) return arr;
-        for (var i = 0; i < _items.Count; i++)
-        {
-            arr.Add(new JsonObject
-            {
-                ["number"] = i + 1,
-                ["item_id"] = _items[i].Id,
-                ["label"] = ItemTitle(_items[i]),
-            });
-        }
-        return arr;
-    }
 }

@@ -37,10 +37,14 @@
       // cache-busting query string, if the build id it finds doesn't match what's currently
       // loaded. Guarded by sessionStorage so it only runs once per launch, not on every
       // in-app navigation (which doesn't re-run this script anyway, since Blazor is an SPA).
+      // Keyed on document.baseURI (not a flat flag) because dev and prod Pages share the
+      // datasciguycode.github.io origin, hence one sessionStorage: a flat key set by visiting
+      // one site in a tab would silently suppress the other site's check in that same tab.
       (function () {
         try {
-          if (sessionStorage.getItem('buildCheckDone')) return;
-          sessionStorage.setItem('buildCheckDone', '1');
+          var k = 'buildCheckDone:' + document.baseURI;
+          if (sessionStorage.getItem(k)) return;
+          sessionStorage.setItem(k, '1');
           var current = document.querySelector('meta[name="build-id"]').content;
           fetch(location.pathname, { cache: 'no-store' })
             .then(function (r) { return r.text(); })
@@ -56,7 +60,7 @@
     </script>
     <link rel="preload" id="webassembly" />
     <link href="_content/Microsoft.FluentUI.AspNetCore.Components/css/reboot.css" rel="stylesheet" />
-    <link rel="stylesheet" href="css/app.css?v=20261104a" />
+    <link rel="stylesheet" href="css/app.css?v=20261109a" />
     <!-- If you add any scoped CSS files, uncomment the following to load them
     <link href="WorkflowApp.Web.styles.css" rel="stylesheet" /> -->
     <link href="manifest.webmanifest" rel="manifest" />

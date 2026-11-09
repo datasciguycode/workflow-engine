@@ -5,9 +5,18 @@ namespace WorkflowApp.Web.Services;
 
 public record WorkflowSummary(string Id, string Name, string ItemLabel);
 public record StageSummary(string Id, string Title, int? SequenceOrder, bool IsInitial, bool IsTerminal, List<string> Checklist);
-public record ItemSummary(string Id, string StageId, JsonObject Data);
+public record ItemSummary(string Id, string StageId, JsonObject Data, DateTimeOffset CreatedAt);
+// search_items RPC result (2026-11-08) -- same shape as ItemSummary plus the job number computed
+// server-side (1-based position among the workflow's items ordered by created_at), so the Jobs
+// list's search results don't need the full unfiltered item list just to label "Job #N".
+public record ItemSearchResult(string Id, string StageId, JsonObject Data, DateTimeOffset CreatedAt, long JobNumber);
 public record ChatMessage(string Who, string Body, string? ItemId, string? StageId);
 public record ItemEventRow(string EventType, string? StageId, JsonObject? Data);
+// add_note's event data is a plain JSON string (to_jsonb(p_note)), not an object like
+// item.created/item.data_changed -- ItemEventRow.Data (typed JsonObject?) can't hold that
+// shape, so notes get their own fetch/record rather than forcing a cast that would silently
+// come back null (2026-11-07).
+public record ItemNote(string Text, string? StageId, DateTimeOffset CreatedAt);
 
 // Cloud project config (workflow-engine-test, pointed here 2026-10-31 replacing local dev).
 // PublishableKey is the new sb_publishable_... format (replaces the legacy JWT anon key) --
@@ -85,14 +94,39 @@ public class WorkflowApiClient
     public async Task<List<ItemSummary>> GetItemsAsync(string workflowId)
     {
         var req = await NewRequestAsync(HttpMethod.Get,
-            $"/rest/v1/items?workflow_id=eq.{workflowId}&select=id,stage_id,data&order=updated_at.desc");
+            $"/rest/v1/items?workflow_id=eq.{workflowId}&select=id,stage_id,data,created_at&order=updated_at.desc");
         var res = await _http.SendAsync(req);
         res.EnsureSuccessStatusCode();
         var rows = await res.Content.ReadFromJsonAsync<List<JsonObject>>() ?? [];
         return rows.Select(r => new ItemSummary(
             r["id"]!.GetValue<string>(),
             r["stage_id"]!.GetValue<string>(),
-            r["data"]!.AsObject()
+            r["data"]!.AsObject(),
+            r["created_at"]!.GetValue<DateTimeOffset>()
+        )).ToList();
+    }
+
+    // Tap-to-search on the Jobs list (2026-11-08) -- runs server-side via the search_items RPC
+    // instead of loading every item and filtering client-side, so the Jobs list itself can stay
+    // on a cheap default fetch (or, later, a paged one) regardless of search volume. See
+    // supabase/migrations/20261108030000_add_search_items.sql for what it matches against.
+    public async Task<List<ItemSearchResult>> SearchItemsAsync(string workflowId, string query)
+    {
+        var req = await NewRequestAsync(HttpMethod.Post, "/rest/v1/rpc/search_items");
+        req.Content = JsonContent.Create(new JsonObject
+        {
+            ["p_workflow_id"] = workflowId,
+            ["p_query"] = query,
+        });
+        var res = await _http.SendAsync(req);
+        res.EnsureSuccessStatusCode();
+        var rows = await res.Content.ReadFromJsonAsync<List<JsonObject>>() ?? [];
+        return rows.Select(r => new ItemSearchResult(
+            r["id"]!.GetValue<string>(),
+            r["stage_id"]!.GetValue<string>(),
+            r["data"]!.AsObject(),
+            r["created_at"]!.GetValue<DateTimeOffset>(),
+            r["job_number"]!.GetValue<long>()
         )).ToList();
     }
 
@@ -114,6 +148,23 @@ public class WorkflowApiClient
         )).ToList();
     }
 
+    // For display (see WorkflowDetail.razor's Notes section, added 2026-11-07): every add_note
+    // call for this item, most recent first. Kept separate from GetItemEventsAsync because a
+    // note's data is a plain JSON string (to_jsonb(p_note)), not an object.
+    public async Task<List<ItemNote>> GetNotesAsync(string itemId)
+    {
+        var req = await NewRequestAsync(HttpMethod.Get,
+            $"/rest/v1/item_events?item_id=eq.{itemId}&event_type=eq.item.note_added&select=data,stage_id,created_at&order=created_at.desc");
+        var res = await _http.SendAsync(req);
+        res.EnsureSuccessStatusCode();
+        var rows = await res.Content.ReadFromJsonAsync<List<JsonObject>>() ?? [];
+        return rows.Select(r => new ItemNote(
+            r["data"]!.GetValue<string>(),
+            r["stage_id"]?.GetValue<string>(),
+            r["created_at"]!.GetValue<DateTimeOffset>()
+        )).ToList();
+    }
+
     // Same RPC the agent's move_stage tool calls (supabase/functions/agent-loop/index.ts) --
     // used directly by the UI's "Done" button so advancing a stage doesn't require going through
     // chat once its checklist is already complete (2026-11-05).
@@ -130,11 +181,30 @@ public class WorkflowApiClient
             throw new HttpRequestException($"move_stage failed ({(int)res.StatusCode}): {await res.Content.ReadAsStringAsync()}");
     }
 
+    // Same RPC the agent's add_note tool calls -- used directly by the chat box's "Save as
+    // note" checkbox so logging a note is deterministic and doesn't require an AI round trip
+    // at all (2026-11-08). stageId is the stage page the note was saved from, or null when saved
+    // from the job overview page -- that's what makes it a job-level vs. stage-level note.
+    public async Task AddNoteAsync(string itemId, string note, string? stageId)
+    {
+        var req = await NewRequestAsync(HttpMethod.Post, "/rest/v1/rpc/add_note");
+        req.Content = JsonContent.Create(new JsonObject
+        {
+            ["p_item_id"] = itemId,
+            ["p_note"] = note,
+            ["p_stage_id"] = stageId,
+        });
+        var res = await _http.SendAsync(req);
+        if (!res.IsSuccessStatusCode)
+            throw new HttpRequestException($"add_note failed ({(int)res.StatusCode}): {await res.Content.ReadAsStringAsync()}");
+    }
+
     // messages is the running Anthropic-shaped message array, passed through opaquely (text,
     // tool_use, and tool_result blocks all round-trip through here -- see agent-loop/index.ts).
     public async Task<(string Reply, JsonArray Messages)> SendAgentMessageAsync(
         string workflowId, JsonArray queue, JsonArray messages,
-        string? selectedItemId = null, string? selectedItemLabel = null, string? selectedStageTitle = null)
+        string? selectedItemId = null, string? selectedItemLabel = null, string? selectedStageTitle = null,
+        string? selectedStageId = null, int? selectedJobNumber = null, int? selectedStageMessageCount = null)
     {
         var body = new JsonObject
         {
@@ -144,6 +214,9 @@ public class WorkflowApiClient
             ["selected_item_id"] = selectedItemId,
             ["selected_item_label"] = selectedItemLabel,
             ["selected_stage_title"] = selectedStageTitle,
+            ["selected_stage_id"] = selectedStageId,
+            ["selected_job_number"] = selectedJobNumber,
+            ["selected_stage_message_count"] = selectedStageMessageCount,
         };
         var req = await NewRequestAsync(HttpMethod.Post, "/functions/v1/agent-loop");
         req.Content = JsonContent.Create(body);
