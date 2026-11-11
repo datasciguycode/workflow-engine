@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 namespace WorkflowApp.Web.Services;
 
 public record WorkflowSummary(string Id, string Name, string ItemLabel);
-public record StageSummary(string Id, string Title, int? SequenceOrder, bool IsInitial, bool IsTerminal, List<string> Checklist);
+public record StageSummary(string Id, string Title, int? SequenceOrder, bool IsInitial, bool IsTerminal, List<string> Checklist, List<string> OptionalChecklist);
 public record ItemSummary(string Id, string StageId, JsonObject Data, DateTimeOffset CreatedAt);
 // search_items RPC result (2026-11-08) -- same shape as ItemSummary plus the job number computed
 // server-side (1-based position among the workflow's items ordered by created_at), so the Jobs
@@ -75,7 +75,7 @@ public class WorkflowApiClient
     public async Task<List<StageSummary>> GetStagesAsync(string workflowId)
     {
         var req = await NewRequestAsync(HttpMethod.Get,
-            $"/rest/v1/stages?workflow_id=eq.{workflowId}&select=id,title,sequence_order,is_initial,is_terminal,checklist&order=sequence_order.asc.nullslast");
+            $"/rest/v1/stages?workflow_id=eq.{workflowId}&select=id,title,sequence_order,is_initial,is_terminal,checklist,optional_checklist&order=sequence_order.asc.nullslast");
         var res = await _http.SendAsync(req);
         res.EnsureSuccessStatusCode();
         var rows = await res.Content.ReadFromJsonAsync<List<JsonObject>>() ?? [];
@@ -87,6 +87,9 @@ public class WorkflowApiClient
             r["is_terminal"]!.GetValue<bool>(),
             r["checklist"] is JsonArray arr
                 ? arr.Select(v => v!.GetValue<string>()).ToList()
+                : [],
+            r["optional_checklist"] is JsonArray optArr
+                ? optArr.Select(v => v!.GetValue<string>()).ToList()
                 : []
         )).ToList();
     }

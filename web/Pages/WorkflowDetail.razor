@@ -60,7 +60,7 @@ else
                 @foreach (var field in selectedStage.Checklist)
                 {
                     var done = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
-                    <div style="opacity:0.75;">@(done ? "☑" : "☐") @ChecklistLabel(field)</div>
+                    <div style="opacity:0.75;">@(done ? "☑" : "☐") @ChecklistLabel(selectedStage, field)</div>
                 }
             </FluentStack>
         }
@@ -112,7 +112,7 @@ else
                             @foreach (var field in stage.Checklist)
                             {
                                 var done = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
-                                <div style="opacity:0.75; font-size:0.9em;">@(done ? "☑" : "☐") @ChecklistLabel(field)</div>
+                                <div style="opacity:0.75; font-size:0.9em;">@(done ? "☑" : "☐") @ChecklistLabel(stage, field)</div>
                             }
                         </div>
                     }
@@ -131,7 +131,7 @@ else
                 <FluentStack Orientation="Orientation.Vertical" VerticalGap="2">
                     @foreach (var field in initialStage.Checklist)
                     {
-                        <div style="opacity:0.75;">&#9744; @ChecklistLabel(field)</div>
+                        <div style="opacity:0.75;">&#9744; @ChecklistLabel(initialStage, field)</div>
                     }
                 </FluentStack>
             }
@@ -163,6 +163,9 @@ else
     {
         <h1>@ItemLabelPlural</h1>
         <FluentLink @onclick="StartNewJob" Class="back-link">+ New @ItemLabelSingular</FluentLink>
+        <FluentLink @onclick="@(() => _showClosed = !_showClosed)" Class="back-link" Style="margin-left:16px;">
+            @(_showClosed ? "Hide closed" : "Show closed")
+        </FluentLink>
 
         @* Tap-to-search (2026-11-08): no live-as-you-type filtering, so searching never fires a
            request per keystroke -- the box just holds text until Search is tapped, and runs
@@ -199,7 +202,7 @@ else
         else
         {
             <FluentStack Orientation="Orientation.Vertical" VerticalGap="8" Style="margin-top:12px;">
-                @foreach (var item in _items)
+                @foreach (var item in VisibleItems())
                 {
                     <FluentCard Class="clickable-card" style="padding:14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius);" @onclick="() => SelectItem(item)">
                         <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
@@ -481,6 +484,17 @@ else
         foreach (var x in parsed) yield return (x.Item, x.Parsed!.Value);
     }
 
+    // Hides jobs sitting in a terminal stage (e.g. Closed) from the bare Jobs list by default --
+    // closed jobs would otherwise just pile up alongside open ones forever (2026-11-11). Search
+    // results are left untouched since searching for a specific job is an explicit intent that
+    // shouldn't be second-guessed by this filter.
+    private bool _showClosed;
+
+    private IEnumerable<ItemSummary> VisibleItems() =>
+        _showClosed
+            ? _items!
+            : _items!.Where(i => _stages!.FirstOrDefault(s => s.Id == i.StageId)?.IsTerminal != true);
+
     private string ItemTitle(ItemSummary item)
     {
         var key = TitleKey(item);
@@ -591,6 +605,13 @@ else
     // into something readable for display.
     private static string ChecklistLabel(string field) => Capitalize(field.Replace('_', ' '));
 
+    // A trailing "*" marks which checklist fields actually gate the Done-shortcut button (see
+    // DoneNextStage) -- everything on a stage's checklist is shown either way, this just tells
+    // the user which ones are optional at a glance rather than leaving it to trial and error
+    // (2026-11-11).
+    private static string ChecklistLabel(StageSummary stage, string field) =>
+        ChecklistLabel(field) + (stage.OptionalChecklist.Contains(field) ? "" : " *");
+
     private async Task SelectItem(ItemSummary item)
     {
         _selectedItem = item;
@@ -621,12 +642,14 @@ else
     }
 
     // The next stage to offer the Done button for, or null if the current stage has no checklist,
-    // the checklist isn't fully filled in yet, or there's no next stage to move to.
+    // its required fields (checklist minus optional_checklist -- 2026-11-11) aren't all filled
+    // in yet, or there's no next stage to move to.
     private StageSummary? DoneNextStage()
     {
         if (_selectedItem is null || _selectedStageId is null) return null;
         if (_stages!.FirstOrDefault(s => s.Id == _selectedStageId) is not { Checklist.Count: > 0 } stage) return null;
-        if (!stage.Checklist.All(f => _selectedItem.Data.TryGetPropertyValue(f, out var v) && v is not null)) return null;
+        var required = stage.Checklist.Except(stage.OptionalChecklist);
+        if (!required.All(f => _selectedItem.Data.TryGetPropertyValue(f, out var v) && v is not null)) return null;
         return NextStage(stage.Id);
     }
 
