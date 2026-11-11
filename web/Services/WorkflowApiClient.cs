@@ -184,6 +184,40 @@ public class WorkflowApiClient
             throw new HttpRequestException($"move_stage failed ({(int)res.StatusCode}): {await res.Content.ReadAsStringAsync()}");
     }
 
+    // Same RPC the agent's update_data tool calls -- used directly by the VIN-scan button so
+    // writing the extracted value is deterministic and doesn't need a model round trip at all,
+    // same reasoning as AddNoteAsync below (2026-11-11).
+    public async Task UpdateDataAsync(string itemId, JsonObject patch)
+    {
+        var req = await NewRequestAsync(HttpMethod.Post, "/rest/v1/rpc/update_data");
+        req.Content = JsonContent.Create(new JsonObject
+        {
+            ["p_item_id"] = itemId,
+            ["p_patch"] = patch,
+        });
+        var res = await _http.SendAsync(req);
+        if (!res.IsSuccessStatusCode)
+            throw new HttpRequestException($"update_data failed ({(int)res.StatusCode}): {await res.Content.ReadAsStringAsync()}");
+    }
+
+    // One-shot image read, not part of the chat/tool-use loop -- the photo is never stored or
+    // added to any conversation history, it's read once here and discarded (2026-11-11).
+    public async Task<string?> ScanVinAsync(string imageBase64, string mediaType)
+    {
+        var req = await NewRequestAsync(HttpMethod.Post, "/functions/v1/scan-vin");
+        req.Content = JsonContent.Create(new JsonObject
+        {
+            ["image_base64"] = imageBase64,
+            ["media_type"] = mediaType,
+        });
+        var res = await _http.SendAsync(req);
+        var text = await res.Content.ReadAsStringAsync();
+        if (!res.IsSuccessStatusCode)
+            throw new HttpRequestException($"scan-vin failed ({(int)res.StatusCode}): {text}");
+        var json = JsonNode.Parse(text)!.AsObject();
+        return json["vin"]?.GetValue<string>();
+    }
+
     // Same RPC the agent's add_note tool calls -- used directly by the chat box's "Save as
     // note" checkbox so logging a note is deterministic and doesn't require an AI round trip
     // at all (2026-11-08). stageId is the stage page the note was saved from, or null when saved

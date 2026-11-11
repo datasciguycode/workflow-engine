@@ -70,6 +70,24 @@ else
                 <span class="field-key">@ChecklistLabel(key):</span> @FieldText(key, value)
             </div>
         }
+        @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("vin") == true)
+        {
+            @* Camera-capture file input styled as a button -- "capture=environment" opens the
+               phone's rear camera directly instead of the photo gallery (2026-11-11). The photo
+               itself is never stored or kept around after the scan (see ScanVinAsync). *@
+            <div style="margin-bottom:12px;">
+                <label for="vin-photo-input" class="fluent-button-like" style="display:inline-block; cursor:pointer;">
+                    <FluentButton Appearance="ButtonAppearance.Primary" Disabled="_scanningVin">
+                        @(_scanningVin ? "Scanning..." : "Scan VIN")
+                    </FluentButton>
+                </label>
+                <InputFile id="vin-photo-input" OnChange="OnVinPhotoSelected" accept="image/*" capture="environment" style="display:none;" />
+                @if (_vinScanError is not null)
+                {
+                    <p style="opacity:0.75; color:var(--colorPaletteRedForeground1, #c00);">@_vinScanError</p>
+                }
+            </div>
+        }
         @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("scheduled_at") == true)
         {
             var upcoming = UpcomingAppointments().ToList();
@@ -674,6 +692,49 @@ else
         finally
         {
             _movingStage = false;
+        }
+    }
+
+    private bool _scanningVin;
+    private string? _vinScanError;
+
+    // Resizes client-side via RequestImageFileAsync (works in WASM, not just Blazor Server --
+    // it draws to an off-screen canvas via JS interop either way) before sending, since a raw
+    // phone photo is several MB and that cost (upload time + tokens) adds up fast (2026-11-11).
+    // The photo is never persisted anywhere -- read once here, handed to scan-vin, discarded.
+    private async Task OnVinPhotoSelected(InputFileChangeEventArgs e)
+    {
+        if (_scanningVin || _selectedItem is null) return;
+        _scanningVin = true;
+        _vinScanError = null;
+        try
+        {
+            var resized = await e.File.RequestImageFileAsync("image/jpeg", 1600, 1600);
+            using var stream = resized.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var base64 = Convert.ToBase64String(ms.ToArray());
+
+            var vin = await Api.ScanVinAsync(base64, "image/jpeg");
+            if (vin is null)
+            {
+                _vinScanError = "Couldn't read a VIN from that photo -- try again with the plate or sticker in better light/focus.";
+                return;
+            }
+
+            await Api.UpdateDataAsync(_selectedItem.Id, new JsonObject { ["vin"] = vin });
+            _items = await Api.GetItemsAsync(WorkflowId);
+            _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
+            if (_selectedItem is not null)
+                await LoadFieldStageMap(_selectedItem.Id);
+        }
+        catch (Exception ex)
+        {
+            _vinScanError = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            _scanningVin = false;
         }
     }
 
