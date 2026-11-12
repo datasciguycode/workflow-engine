@@ -49,7 +49,14 @@ type RequestBody = {
   // does: that stage's id when one is open, or omitted for a job-level note made from the job
   // overview page (2026-11-08).
   selected_stage_id?: string;
-  selected_job_number?: number;
+  // Client-computed display name for the selected item (e.g. "Job #5" for the mechanic
+  // workflow, "Breakfast 2026-11-12" for Nutrition Tracker's meal entries -- see
+  // ItemDisplayName in WorkflowDetail.razor) -- this function stays workflow-agnostic by never
+  // hardcoding "Job #" itself and just echoing back whatever the client decided this item
+  // should be called (2026-11-12, after the agent asked the user "whose log should I put this
+  // lunch under?" on Nutrition Tracker, a mechanic-shop-specific assumption baked into the old
+  // selected_job_number/"Job #" wording below that doesn't apply to every workflow).
+  selected_item_display_name?: string;
   // Count of the user's own messages sent in this exact job+stage so far (including this one).
   // Past a threshold, the system prompt nudges the agent to capture further detail via add_note
   // instead of letting it accumulate as raw chat text (2026-11-07) -- notes are plain stored
@@ -113,20 +120,24 @@ const TOOLS: Anthropic.Tool[] = [
     name: "create_item",
     description:
       "Create a new item in the active workflow. It lands automatically in the workflow's is_initial stage. " +
-      "The UI displays data.title as the item's heading, so always compose it yourself as " +
-      "\"{customer} - {short task}\" (a few words, not the full sentence) -- e.g. a request of " +
-      "\"Bob's cat needs to be removed from the car\" becomes title \"Bob - cat removal\". Never copy the " +
-      "raw request/complaint text verbatim into title. Put the actual task description, complaint, or " +
-      "request in its own field (e.g. data.description), separate from title. If you don't yet have a " +
-      "customer name to anchor the title on, ask for one before creating the item rather than guessing.",
+      "If data.title is present, the UI displays it as the item's heading -- but title is OPTIONAL, not " +
+      "something to chase: only include it when the workflow has a natural named entity to anchor on (e.g. a " +
+      "customer, for the mechanic-shop workflow -- compose it yourself as \"{customer} - {short task}\", a few " +
+      "words, not the full sentence; never copy the raw request/complaint text verbatim into title, put that in " +
+      "its own field like data.description instead). For a workflow with no such entity (e.g. a recurring daily " +
+      "log), omit title entirely -- the UI falls back to a sensible default (the stage and date) on its own. " +
+      "Never ask the user for a name just to satisfy a title -- only ask for information actually missing from " +
+      "the active stage's checklist, and otherwise create the item right away from whatever they already told you.",
     input_schema: {
       type: "object",
       properties: {
         data: {
           type: "object",
           description:
-            "Initial free-form fields for the item, e.g. {title: \"Bob - cat removal\", customer: \"Bob\", " +
-            "phone: \"999-999-9999\", description: \"Cat needs to be removed from the car\"}.",
+            "Initial free-form fields for the item -- e.g. for a job-like workflow: {title: \"Bob - cat removal\", " +
+            "customer: \"Bob\", phone: \"999-999-9999\", description: \"Cat needs to be removed from the car\"}; " +
+            "for a workflow with no natural title (e.g. a daily log), just the checklist-style fields with no " +
+            "title key at all, e.g. {protein_g: 20, carbs_g: 15, fat_g: 30}.",
         },
       },
       required: ["data"],
@@ -135,11 +146,11 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "move_stage",
     description:
-      "Move an existing item to a different stage in its workflow. Omit item_id to target the job currently open in the UI (see the note above the queue) -- only pass item_id explicitly when the user's message clearly names a different job (by queue number, job number, or a distinguishing detail like customer/vehicle). May be rejected by the workflow's stage-order rules (e.g. a forward skip when enforce_stage_order is true) -- if so, explain the rejection to the user in plain text, don't retry silently.",
+      "Move an existing item to a different stage in its workflow. Omit item_id to target the item currently open in the UI (see the note above the queue) -- only pass item_id explicitly when the user's message clearly names a different item (by queue number, a number/label shown on screen, or a distinguishing detail). May be rejected by the workflow's stage-order rules (e.g. a forward skip when enforce_stage_order is true) -- if so, explain the rejection to the user in plain text, don't retry silently.",
     input_schema: {
       type: "object",
       properties: {
-        item_id: { type: "string", description: "uuid of the item to move; omit to use the job currently open in the UI" },
+        item_id: { type: "string", description: "uuid of the item to move; omit to use the item currently open in the UI" },
         to_stage_id: { type: "string", description: "uuid of the destination stage" },
       },
       required: ["to_stage_id"],
@@ -148,11 +159,11 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "update_data",
     description:
-      "Apply a top-level merge patch to an item's data. Omit item_id to target the job currently open in the UI (see the note above the queue) -- only pass item_id explicitly when the user's message clearly names a different job (by queue number, job number, or a distinguishing detail like customer/vehicle); this matters even if a different job was discussed earlier in the conversation -- a message with no job reference, while one job is open in the UI, always means that open job. Each key in the patch replaces that key's value wholesale; a top-level null deletes that key. Arrays are replaced wholesale, never appended -- to add to an array field, include the whole new array (read-modify-write).",
+      "Apply a top-level merge patch to an item's data. Omit item_id to target the item currently open in the UI (see the note above the queue) -- only pass item_id explicitly when the user's message clearly names a different item (by queue number, a number/label shown on screen, or a distinguishing detail); this matters even if a different item was discussed earlier in the conversation -- a message with no item reference, while one item is open in the UI, always means that open item. Each key in the patch replaces that key's value wholesale; a top-level null deletes that key. Arrays are replaced wholesale, never appended -- to add to an array field, include the whole new array (read-modify-write).",
     input_schema: {
       type: "object",
       properties: {
-        item_id: { type: "string", description: "uuid of the item to update; omit to use the job currently open in the UI" },
+        item_id: { type: "string", description: "uuid of the item to update; omit to use the item currently open in the UI" },
         patch: { type: "object" },
       },
       required: ["patch"],
@@ -160,11 +171,11 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "add_note",
-    description: "Add a free-text note to an item's history, shown to the user in the UI's own Notes section. Does not change the item's data. Prefer this over just replying in chat for any detailed commentary, context, or explanation that doesn't map to a checklist field or a direct instruction -- notes are the durable record for that kind of detail; chat is for short back-and-forth. Omit item_id to target the job currently open in the UI (see the note above the queue) -- only pass item_id explicitly when the user's message clearly names a different job. The note is automatically tagged with whichever stage (if any) is currently drilled into in the UI -- a job-level note vs. a stage-specific one is decided entirely by where the user is looking, not by anything you choose here.",
+    description: "Add a free-text note to an item's history, shown to the user in the UI's own Notes section. Does not change the item's data. Prefer this over just replying in chat for any detailed commentary, context, or explanation that doesn't map to a checklist field or a direct instruction -- notes are the durable record for that kind of detail; chat is for short back-and-forth. Omit item_id to target the item currently open in the UI (see the note above the queue) -- only pass item_id explicitly when the user's message clearly names a different item. The note is automatically tagged with whichever stage (if any) is currently drilled into in the UI -- an item-level note vs. a stage-specific one is decided entirely by where the user is looking, not by anything you choose here.",
     input_schema: {
       type: "object",
       properties: {
-        item_id: { type: "string", description: "uuid of the item to note; omit to use the job currently open in the UI" },
+        item_id: { type: "string", description: "uuid of the item to note; omit to use the item currently open in the UI" },
         note: { type: "string" },
       },
       required: ["note"],
@@ -229,7 +240,7 @@ function systemPrompt(
   selectedItemId?: string,
   selectedItemLabel?: string,
   selectedStageTitle?: string,
-  selectedJobNumber?: number,
+  selectedItemDisplayName?: string,
   selectedStageMessageCount?: number,
 ) {
   // Restated close to every turn (this whole prompt is rebuilt fresh each request) and reinforced
@@ -255,34 +266,35 @@ function systemPrompt(
     ? `drilled into its "${selectedStageTitle}" stage's own view`
     : "on its own overview page (no particular stage drilled into)";
   const selectedContext = selectedItemId
-    ? `\nTHE USER IS CURRENTLY LOOKING AT ONE SPECIFIC JOB: Job #${selectedJobNumber ?? "?"}, "${selectedItemLabel ?? selectedItemId}" (id ${selectedItemId}), ${stageContext}. For move_stage, update_data, and add_note: omit item_id entirely to target this job -- that is the default and correct choice for any message that doesn't clearly name a different job, REGARDLESS of which other jobs were created or discussed earlier in this same conversation. Only pass an explicit item_id when the user's current message itself names a different job (by job number, queue number, or a distinguishing detail like customer/vehicle) or asks to act on a job other than this one. Don't ask "which job?" just because other jobs also exist in the queue below -- the open one always wins unless the message says otherwise. A note added here is automatically tagged with the stage named above, if any -- it's a job-level note (no stage) when the user is on the overview page.${noteNudge}\n`
+    ? `\nTHE USER IS CURRENTLY LOOKING AT ONE SPECIFIC ITEM: ${selectedItemDisplayName ?? selectedItemLabel ?? selectedItemId} (id ${selectedItemId}), ${stageContext}. For move_stage, update_data, and add_note: omit item_id entirely to target this item -- that is the default and correct choice for any message that doesn't clearly name a different item, REGARDLESS of which other items were created or discussed earlier in this same conversation. Only pass an explicit item_id when the user's current message itself names a different item (by a number or label shown on screen, or a distinguishing detail) or asks to act on an item other than this one. Don't ask "which one?" just because other items also exist in the queue below -- the open one always wins unless the message says otherwise. A note added here is automatically tagged with the stage named above, if any -- it's an item-level note (no stage) when the user is on the overview page.${noteNudge}\n`
     : "";
-  return `You are a workflow assistant for a mechanic-shop / task-tracking app. You act on the user's spoken-or-typed instructions using the tools available to you.
+  return `You are a workflow assistant for a generic items-moving-through-stages app (the active workflow could be a mechanic shop's job queue, a daily nutrition log, or anything else shaped the same way) -- never assume it's about jobs, customers, or repairs unless the stages/checklist below actually show that. You act on the user's spoken-or-typed instructions using the tools available to you.
 
 Active workflow's stages (id, title, sequence_order, is_initial, is_terminal, checklist):
 ${JSON.stringify(stages)}
 A stage's checklist, where present, lists the data.* field keys typically filled in at that stage
-(e.g. intake: customer, phone, address) -- a soft guide for what to ask about, not a hard
-requirement. Not every job needs every checklist item filled in, and a missing one should never
-block creating a job or moving it forward; just use it to know what's worth asking for if the
-user hasn't already given it. When you do capture a value for one, write it via update_data (or
-in create_item's initial data) using that exact key -- the UI shows each stage's checklist as
+(e.g. a mechanic-shop intake stage: customer, phone, address; a nutrition-log breakfast stage:
+protein_g, carbs_g, fat_g) -- a soft guide for what to ask about, not a hard requirement. Not
+every item needs every checklist item filled in, and a missing one should never block creating
+an item or moving it forward; just use it to know what's worth asking for if the user hasn't
+already given it. When you do capture a value for one, write it via update_data (or in
+create_item's initial data) using that exact key -- the UI shows each stage's checklist as
 done/not-done by checking for that key in the item's data, so a note-only add_note call for it
 won't show as done even though you recorded it somewhere.
 ${selectedContext}
-Reference queue -- items recently mentioned or created in this conversation, numbered by order of mention (the user may say "number one", "the second one", etc. instead of a name). Each entry also carries job_number, the SAME permanent "Job #N" number shown on screen for that job (different from this queue's own position-based numbering) -- use job_number when the user says "job 2" / "job #2" meaning the on-screen number, not the queue's "number one"/"the second one" convention. ${
+Reference queue -- items recently mentioned or created in this conversation, numbered by order of mention (the user may say "number one", "the second one", etc. instead of a name). ${
     selectedItemId
-      ? "Deliberately EMPTY right now because a specific job is open in the UI (above) -- act on that job alone; don't reference, compare to, or guess at other jobs by name even if they came up earlier in this conversation. This is expected, not an error."
-      : "Populated because no specific job is open right now."
+      ? "Deliberately EMPTY right now because a specific item is open in the UI (above) -- act on that item alone; don't reference, compare to, or guess at other items by name even if they came up earlier in this conversation. This is expected, not an error."
+      : "Populated because no specific item is open right now."
   }
 ${JSON.stringify(queue)}
 
 Rules:
 - Stage titles above are stored as snake_case ids (e.g. "in_progress", "payment_receipt_submitted"). When mentioning a stage in your reply, write it with spaces instead of underscores (e.g. "in progress", "payment receipt submitted") -- never show the raw underscored form to the user.
-- The user may refer to an item by its queue number, its job number, or a descriptive name/detail (e.g. "the Civic").
-- When a message reads like a task or request (e.g. "Fix Bob's engine," "Replace the brake pads"), default to treating it as the job's own description -- something to track, not an instruction for you to carry out yourself. Only treat it as a literal instruction to you when it's clearly addressed to you as the assistant (e.g. "move this to diagnosis," "add a note that..."). If genuinely ambiguous, ask which one they mean before proposing a tool call -- but first check whether the job currently open in the UI (above, if any) already resolves the ambiguity.
-- When creating a job from a request like that, don't use the raw request text as the title -- see create_item's description for how to split title vs. description.
-- Act immediately -- the user's message is already visible on screen, so there's no need to restate what you're about to do and wait for a separate "yes" before calling a tool. Call the tool as soon as the instruction (or job-creation/move request) is clear; only ask first if it's genuinely ambiguous which item or stage is meant (see above).
+- The user may refer to an item by its queue number or a descriptive name/detail (e.g. "the Civic", or just "it"/"this one" when only one item is open).
+- When a message reads like a task, request, or log entry (e.g. "Fix Bob's engine," "I had eggs and toast"), default to treating it as the item's own description/data -- something to track, not an instruction for you to carry out yourself. Only treat it as a literal instruction to you when it's clearly addressed to you as the assistant (e.g. "move this to diagnosis," "add a note that..."). If genuinely ambiguous, ask which one they mean before proposing a tool call -- but first check whether the item currently open in the UI (above, if any) already resolves the ambiguity.
+- When creating an item from a request like that, don't use the raw request text as the title -- see create_item's description for how to split title vs. description (and when to skip title entirely).
+- Act immediately -- the user's message is already visible on screen, so there's no need to restate what you're about to do and wait for a separate "yes" before calling a tool. Call the tool as soon as the instruction (or item-creation/move request) is clear; only ask first if it's genuinely ambiguous which item or stage is meant (see above).
 - After a tool call succeeds, reply with a short acknowledgment only (e.g. "Saved."). Do not read back the data you just wrote.
 - After a successful create_item, update_data, or add_note call (but not right after a move_stage -- you just said where it moved, don't immediately ask about moving it again), proactively add which stage the item is currently in and what the next stage is (by sequence_order), and ask if they want to move there now. Do this every time -- don't wait for the user to separately ask "what's next?". Skip it only if the item is already at a terminal stage (is_terminal).
 - If a tool call fails (e.g. a rejected stage move), explain briefly in plain text what went wrong. Don't retry automatically.
@@ -375,7 +387,7 @@ Deno.serve(async (req) => {
           body.selected_item_id,
           body.selected_item_label,
           body.selected_stage_title,
-          body.selected_job_number,
+          body.selected_item_display_name,
           body.selected_stage_message_count,
         ),
         tools: TOOLS,

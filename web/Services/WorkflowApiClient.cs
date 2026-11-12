@@ -271,7 +271,7 @@ public class WorkflowApiClient
     public async Task<(string Reply, JsonArray Messages)> SendAgentMessageAsync(
         string workflowId, JsonArray queue, JsonArray messages,
         string? selectedItemId = null, string? selectedItemLabel = null, string? selectedStageTitle = null,
-        string? selectedStageId = null, int? selectedJobNumber = null, int? selectedStageMessageCount = null)
+        string? selectedStageId = null, string? selectedItemDisplayName = null, int? selectedStageMessageCount = null)
     {
         var body = new JsonObject
         {
@@ -282,7 +282,7 @@ public class WorkflowApiClient
             ["selected_item_label"] = selectedItemLabel,
             ["selected_stage_title"] = selectedStageTitle,
             ["selected_stage_id"] = selectedStageId,
-            ["selected_job_number"] = selectedJobNumber,
+            ["selected_item_display_name"] = selectedItemDisplayName,
             ["selected_stage_message_count"] = selectedStageMessageCount,
         };
         var req = await NewRequestAsync(HttpMethod.Post, "/functions/v1/agent-loop");

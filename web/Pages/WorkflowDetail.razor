@@ -944,7 +944,7 @@ else
                 // what makes an agent-written add_note there land as a job-level note (2026-11-08).
                 selectedStageTitle: _selectedStageId is not null ? StageTitle(_selectedStageId) : null,
                 selectedStageId: _selectedStageId,
-                selectedJobNumber: _selectedItem is null ? null : JobNumber(_selectedItem),
+                selectedItemDisplayName: _selectedItem is null ? null : ItemDisplayName(_selectedItem),
                 selectedStageMessageCount: stageMessageCount);
             _messagesByJob[messagesKey] = messages;
             _chatLog.Add(("Agent", reply, itemId, stageId));
