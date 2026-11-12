@@ -42,5 +42,48 @@
   the Scheduling-stage one already built), making the prod repo private (needs GitHub Pro),
   an Anthropic spend alert (Console-side, not code), and job assignment/claiming (including
   at intake time) for multiple workers sharing one account's job queue.
-- Outstanding: nothing uncommitted in either repo once this commit lands. Both dev and prod
-  fully committed, pushed, live, and at feature parity.
+- **Dev pulled ahead of prod (2026-11-12)**, several features built in dev only, not yet
+  ported to prod:
+  - **Per-stage optional checklist fields**: new `optional_checklist` jsonb column on `stages`
+    (parallel to `checklist`). `ChecklistLabel` renders a trailing `" *"` on any field not in
+    it; `DoneNextStage()` gates on `checklist.Except(optional_checklist)` only. Walked every
+    mechanic-workflow stage to pick one required field each (Diagnosis: `diagnosis`;
+    Approval: `approved`; In Progress: `technician`; Invoicing: `invoice_number`; Payment
+    Receipt Submitted: `receipt_number`; etc. — `parts` on Diagnosis made optional).
+  - **Hide closed jobs by default**: Jobs list filters on `stage.IsTerminal` with a "Show
+    closed"/"Hide closed" toggle (`VisibleItems()` in `WorkflowDetail.razor`).
+  - **VIN photo scanner**: `scan-vin` edge function (one-shot Claude Messages API call, no
+    tool loop, photo never stored/added to chat) + a "Scan VIN" button on the Diagnosis stage,
+    writing the result via the direct `UpdateDataAsync` RPC wrapper (not through chat).
+  - **Nutrition Tracker workflow**: a second workflow on the same engine, same shape as the
+    mechanic workflow — a "meal date" item moves through 5 real sequential stages (Breakfast
+    → Brunch → Lunch → Linner → Dinner), all checklist fields
+    (protein/carbs/fat/fiber/sugar/weight) optional on every stage. Brunch/Linner exist so a
+    between-meal snack folds into the nearest stage's running total rather than needing an
+    open-ended snack list. No goal-tracking stage (deferred — a workflow can only have one
+    `is_initial` stage, already claimed by Breakfast). An earlier, more complex
+    all-terminal-peer-stages design went through the full plan-pipeline
+    (`plans/diet-workflow/final-plan.md`, `approved-with-changes`) but was superseded by this
+    simpler sequential design before implementation, since it maps directly onto patterns the
+    engine already supports — the plan directory is kept as historical record only.
+  - **scan-plate**: a `scan-vin`-pattern edge function that estimates protein/carbs/fat/fiber/
+    sugar grams from a food photo plus an uncertainty note, validated against per-field bounds
+    and an Atwater-based implied-calorie plausibility check (10–3000 kcal) before being
+    trusted. Verified end-to-end against a real plate photo this session (19g protein / 40g
+    carbs / 55g fat / 19g fiber / 11g sugar, sane uncertainty note). Two real bugs found and
+    fixed during that test: the `ANTHROPIC_API_KEY` secret had gone invalid (user reset it on
+    platform.claude.com) and `max_tokens: 512` was too tight, truncating the JSON response
+    mid-string (bumped to 1024). `supabase/config.toml` now has an explicit
+    `[functions.scan-plate] verify_jwt = true` — needed because a bare redeploy without
+    `--no-verify-jwt` silently no-ops when the function bundle is unchanged, so a test deploy
+    with JWT checking off stayed off until an explicit config forced a real redeploy.
+  - `plans/diet-workflow/test-plate.jpg` (the real test photo) is intentionally **not**
+    committed — personal photo, public repo.
+- Outstanding:
+  - Dev's web app changes are committed and pushed to `main` (triggers
+    `deploy-pages.yml`) — confirm the GitHub Pages deploy succeeds.
+  - None of today's dev-only features (optional_checklist, hide-closed-jobs, VIN scanner,
+    Nutrition Tracker, scan-plate) have been ported to prod yet — prod is now behind dev,
+    mirroring the same kind of gap the 2026-11-09 port closed in the other direction.
+  - Next concrete step: decide whether/when to port today's dev features to prod, the same
+    way the 2026-11-09 entry above ported prod's features into dev.
