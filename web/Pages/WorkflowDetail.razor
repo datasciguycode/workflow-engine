@@ -53,7 +53,13 @@ else
 
     @if (_selectedStageId is not null && _selectedItem is not null)
     {
-        <h1 style="overflow-wrap:anywhere; word-break:break-word;">Job #@JobNumber(_selectedItem) &mdash; @StageTitle(_selectedStageId)</h1>
+        <h1 style="overflow-wrap:anywhere; word-break:break-word;">
+            @ItemDisplayName(_selectedItem)
+            @if (string.Equals(_workflow?.ItemLabel, "job", StringComparison.OrdinalIgnoreCase))
+            {
+                <text> &mdash; @StageTitle(_selectedStageId)</text>
+            }
+        </h1>
         @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId) is { Checklist.Count: > 0 } selectedStage)
         {
             <FluentStack Orientation="Orientation.Vertical" VerticalGap="2" Style="margin-bottom:12px;">
@@ -126,7 +132,7 @@ else
                            FluentUI version (same issue hit on Notes/Chat), hence the explicit
                            margin here too (2026-11-10). *@
                         <div style="opacity:0.85; margin-bottom:12px;">
-                            <div>Job #@JobNumber(item) &mdash; @when.ToString("MMM d, h:mm tt", System.Globalization.CultureInfo.InvariantCulture)</div>
+                            <div>@ItemDisplayName(item) &mdash; @when.ToString("MMM d, h:mm tt", System.Globalization.CultureInfo.InvariantCulture)</div>
                             <div>@ItemTitle(item)</div>
                         </div>
                     }
@@ -136,7 +142,7 @@ else
     }
     else if (_selectedItem is not null)
     {
-        <h1>Job #@JobNumber(_selectedItem)</h1>
+        <h1>@ItemDisplayName(_selectedItem)</h1>
         <h2>Stages</h2>
         <FluentStack Orientation="Orientation.Vertical" VerticalGap="6">
             @foreach (var stage in _stages.OrderBy(s => s.SequenceOrder ?? int.MaxValue))
@@ -191,7 +197,7 @@ else
                 @foreach (var (item, when) in upcomingAtIntake)
                 {
                     <div style="opacity:0.85; margin-bottom:12px;">
-                        <div>Job #@JobNumber(item) &mdash; @when.ToString("MMM d, h:mm tt", System.Globalization.CultureInfo.InvariantCulture)</div>
+                        <div>@ItemDisplayName(item) &mdash; @when.ToString("MMM d, h:mm tt", System.Globalization.CultureInfo.InvariantCulture)</div>
                         <div>@ItemTitle(item)</div>
                     </div>
                 }
@@ -231,7 +237,14 @@ else
                     var item = new ItemSummary(result.Id, result.StageId, result.Data, result.CreatedAt);
                     <FluentCard Class="clickable-card" style="padding:14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius);" @onclick="() => SelectItem(item)">
                         <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                            <strong style="color:var(--app-accent);">#@result.JobNumber @ItemTitle(item) &rarr;</strong>
+                            @if (string.Equals(_workflow?.ItemLabel, "job", StringComparison.OrdinalIgnoreCase))
+                            {
+                                <strong style="color:var(--app-accent);">#@result.JobNumber @ItemTitle(item) &rarr;</strong>
+                            }
+                            else
+                            {
+                                <strong style="color:var(--app-accent);">@ItemDisplayName(item) &rarr;</strong>
+                            }
                         </div>
                         <div style="opacity:0.7; margin-top:2px;">Stage: @StageTitle(item.StageId)</div>
                     </FluentCard>
@@ -245,7 +258,14 @@ else
                 {
                     <FluentCard Class="clickable-card" style="padding:14px; max-width:100%; box-sizing:border-box; border-radius:var(--app-radius);" @onclick="() => SelectItem(item)">
                         <div style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                            <strong style="color:var(--app-accent);">#@JobNumber(item) @ItemTitle(item) &rarr;</strong>
+                            @if (string.Equals(_workflow?.ItemLabel, "job", StringComparison.OrdinalIgnoreCase))
+                            {
+                                <strong style="color:var(--app-accent);">#@JobNumber(item) @ItemTitle(item) &rarr;</strong>
+                            }
+                            else
+                            {
+                                <strong style="color:var(--app-accent);">@ItemDisplayName(item) &rarr;</strong>
+                            }
                         </div>
                         <div style="opacity:0.7; margin-top:2px;">Stage: @StageTitle(item.StageId)</div>
                     </FluentCard>
@@ -547,6 +567,16 @@ else
     // assigned.
     private int JobNumber(ItemSummary item) =>
         _items is null ? 0 : _items.OrderBy(i => i.CreatedAt).ToList().FindIndex(i => i.Id == item.Id) + 1;
+
+    // An arbitrary sequential count only makes sense as an identifier for the mechanic
+    // workflow's actual jobs ("job" item_label) -- for anything else (e.g. Nutrition Tracker's
+    // meal entries), which stage and which day it happened on identifies it far better than a
+    // count ever could. yyyy-MM-dd first so a list of these sorts correctly as plain text, not
+    // just by the underlying timestamp (2026-11-12, user request).
+    private string ItemDisplayName(ItemSummary item) =>
+        string.Equals(_workflow?.ItemLabel, "job", StringComparison.OrdinalIgnoreCase)
+            ? $"Job #{JobNumber(item)}"
+            : $"{StageTitle(item.StageId)} {item.CreatedAt:yyyy-MM-dd}";
 
     // No field names can be assumed in general (data is domain-agnostic jsonb), but a field
     // literally named "title" is a real convention the agent itself already uses when it creates
