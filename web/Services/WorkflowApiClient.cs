@@ -17,6 +17,10 @@ public record ItemEventRow(string EventType, string? StageId, JsonObject? Data);
 // shape, so notes get their own fetch/record rather than forcing a cast that would silently
 // come back null (2026-11-07).
 public record ItemNote(string Text, string? StageId, DateTimeOffset CreatedAt);
+// scan-plate's result -- null from ScanFoodPhotoAsync means the function itself judged the photo
+// unreadable/implausible (its own validation rejected it, HTTP 422), distinct from a genuine
+// request failure (which still throws, same as ScanVinAsync) (2026-11-12).
+public record FoodScanResult(double ProteinG, double CarbsG, double FatG, double FiberG, double SugarG, string UncertaintyNote);
 
 // Cloud project config (workflow-engine-test, pointed here 2026-10-31 replacing local dev).
 // PublishableKey is the new sb_publishable_... format (replaces the legacy JWT anon key) --
@@ -216,6 +220,32 @@ public class WorkflowApiClient
             throw new HttpRequestException($"scan-vin failed ({(int)res.StatusCode}): {text}");
         var json = JsonNode.Parse(text)!.AsObject();
         return json["vin"]?.GetValue<string>();
+    }
+
+    // 422 means scan-plate's own validation judged the estimate unreliable (not a request
+    // failure) -- returns null for that case so the caller can show a "try again" message, same
+    // as ScanVinAsync returning a null vin, rather than throwing for an expected outcome.
+    public async Task<FoodScanResult?> ScanFoodPhotoAsync(string imageBase64, string mediaType)
+    {
+        var req = await NewRequestAsync(HttpMethod.Post, "/functions/v1/scan-plate");
+        req.Content = JsonContent.Create(new JsonObject
+        {
+            ["image_base64"] = imageBase64,
+            ["media_type"] = mediaType,
+        });
+        var res = await _http.SendAsync(req);
+        var text = await res.Content.ReadAsStringAsync();
+        if (res.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity) return null;
+        if (!res.IsSuccessStatusCode)
+            throw new HttpRequestException($"scan-plate failed ({(int)res.StatusCode}): {text}");
+        var json = JsonNode.Parse(text)!.AsObject();
+        return new FoodScanResult(
+            json["protein_g"]!.GetValue<double>(),
+            json["carbs_g"]!.GetValue<double>(),
+            json["fat_g"]!.GetValue<double>(),
+            json["fiber_g"]!.GetValue<double>(),
+            json["sugar_g"]!.GetValue<double>(),
+            json["uncertainty_note"]!.GetValue<string>());
     }
 
     // Same RPC the agent's add_note tool calls -- used directly by the chat box's "Save as

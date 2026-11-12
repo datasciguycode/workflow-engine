@@ -88,6 +88,27 @@ else
                 }
             </div>
         }
+        @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("protein_g") == true)
+        {
+            @* Same camera-capture pattern as Scan VIN above, pointed at food instead of a VIN
+               plate (2026-11-12). The photo is never stored -- see ScanFoodPhotoAsync/scan-plate. *@
+            <div style="margin-bottom:12px;">
+                <label for="plate-photo-input" class="fluent-button-like" style="display:inline-block; cursor:pointer;">
+                    <FluentButton Appearance="ButtonAppearance.Primary" Disabled="_scanningPlate">
+                        @(_scanningPlate ? "Scanning..." : "Scan Plate")
+                    </FluentButton>
+                </label>
+                <InputFile id="plate-photo-input" OnChange="OnFoodPhotoSelected" accept="image/*" capture="environment" style="display:none;" />
+                @if (_plateScanNote is not null)
+                {
+                    <p style="opacity:0.75;">@_plateScanNote</p>
+                }
+                @if (_plateScanError is not null)
+                {
+                    <p style="opacity:0.75; color:var(--colorPaletteRedForeground1, #c00);">@_plateScanError</p>
+                }
+            </div>
+        }
         @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("scheduled_at") == true)
         {
             var upcoming = UpcomingAppointments().ToList();
@@ -735,6 +756,58 @@ else
         finally
         {
             _scanningVin = false;
+        }
+    }
+
+    private bool _scanningPlate;
+    private string? _plateScanError;
+    // Shown even on success -- scan-plate always reports what's making its own estimate less
+    // reliable (no size reference, hidden sauce/oil, etc.), so this isn't an error path, just a
+    // second line surfaced the same way _vinScanError is (2026-11-12).
+    private string? _plateScanNote;
+
+    private async Task OnFoodPhotoSelected(InputFileChangeEventArgs e)
+    {
+        if (_scanningPlate || _selectedItem is null) return;
+        _scanningPlate = true;
+        _plateScanError = null;
+        _plateScanNote = null;
+        try
+        {
+            var resized = await e.File.RequestImageFileAsync("image/jpeg", 1600, 1600);
+            using var stream = resized.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var base64 = Convert.ToBase64String(ms.ToArray());
+
+            var result = await Api.ScanFoodPhotoAsync(base64, "image/jpeg");
+            if (result is null)
+            {
+                _plateScanError = "Couldn't get a reliable estimate from that photo -- try again with better lighting, or just tell the chat what you ate.";
+                return;
+            }
+
+            await Api.UpdateDataAsync(_selectedItem.Id, new JsonObject
+            {
+                ["protein_g"] = result.ProteinG,
+                ["carbs_g"] = result.CarbsG,
+                ["fat_g"] = result.FatG,
+                ["fiber_g"] = result.FiberG,
+                ["sugar_g"] = result.SugarG,
+            });
+            _plateScanNote = result.UncertaintyNote;
+            _items = await Api.GetItemsAsync(WorkflowId);
+            _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
+            if (_selectedItem is not null)
+                await LoadFieldStageMap(_selectedItem.Id);
+        }
+        catch (Exception ex)
+        {
+            _plateScanError = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            _scanningPlate = false;
         }
     }
 

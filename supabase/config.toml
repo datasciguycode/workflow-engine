@@ -394,6 +394,13 @@ deno_version = 2
 [functions.mcp-server]
 verify_jwt = false
 
+# scan-plate: explicit true, not just the default, because a 2026-11-12 curl test temporarily
+# deployed this function with --no-verify-jwt and a bare `deploy` afterward turned out to be a
+# no-op (CLI skips redeploy when the bundle content is unchanged, so the JWT setting silently
+# stuck off). An explicit config entry forces the CLI to actually apply it on every deploy.
+[functions.scan-plate]
+verify_jwt = true
+
 [analytics]
 enabled = true
 port = 54327
