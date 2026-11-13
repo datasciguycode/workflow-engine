@@ -65,11 +65,19 @@ else
             @* One merged line per field instead of a checkbox list plus a separate value list
                below it (2026-11-13, user request) -- when a value exists, it's shown right
                before the label (with its unit glued on for _g/_lbs-style fields, e.g. "43g
-               Protein") instead of repeating the label a second time further down the page. *@
+               Protein") instead of repeating the label a second time further down the page.
+               Only shown at all when this IS the item's actual current stage -- item.data is one
+               flat object, not split per stage, so a workflow whose stages reuse field names
+               (e.g. Nutrition Tracker's protein_g on every meal) would otherwise show whatever
+               the item's real current stage holds under EVERY stage's preview, including ones
+               the item has already left or never reached (2026-11-13 user report: "whenever I go
+               to a different stage, it has the same micronutrient grams on each page"). *@
+            var onCurrentStage = selectedStage.Id == _selectedItem.StageId;
             <FluentStack Orientation="Orientation.Vertical" VerticalGap="2" Style="margin-bottom:12px;">
                 @foreach (var field in selectedStage.Checklist)
                 {
-                    var hasValue = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
+                    var hasRawValue = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
+                    var hasValue = onCurrentStage && hasRawValue;
                     var (baseLabel, unit) = FieldLabelAndUnit(field);
                     var star = selectedStage.OptionalChecklist.Contains(field) ? "" : " *";
                     <div style="opacity:0.75; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
@@ -90,8 +98,13 @@ else
                 }
             </FluentStack>
         }
-        @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("vin") == true)
+        @if (_selectedStageId == _selectedItem.StageId && _stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("vin") == true)
         {
+            @* Only offered while actually sitting on this stage, not while previewing it from
+               the Stages list (2026-11-13) -- scanning writes straight into the item's one flat
+               data object via update_data, which has no idea which stage you were LOOKING at;
+               it would land under whichever stage the item is really in, so showing this button
+               during a preview of some other stage would silently misattribute the write. *@
             @* Photo-picker file input styled as a button (2026-11-11). No "capture" attribute --
                that would force the camera open directly and skip the photo-library option on
                some browsers (2026-11-12 user report: couldn't load an existing photo at all).
@@ -110,9 +123,10 @@ else
                 }
             </div>
         }
-        @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("protein_g") == true)
+        @if (_selectedStageId == _selectedItem.StageId && _stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("protein_g") == true)
         {
-            @* Same photo-picker pattern as Scan VIN above, pointed at food instead of a VIN
+            @* Same current-stage-only gating as Scan VIN above (2026-11-13) -- see its comment.
+               Same photo-picker pattern as Scan VIN above, pointed at food instead of a VIN
                plate (2026-11-12). The photo is never stored -- see ScanFoodPhotoAsync/scan-plate. *@
             <div style="margin-bottom:12px;">
                 <label for="plate-photo-input" class="fluent-button-like" style="display:inline-block; cursor:pointer;">
@@ -172,7 +186,12 @@ else
                         <div style="margin-top:6px; display:flex; flex-direction:column; gap:2px;" @onclick:stopPropagation="true">
                             @foreach (var field in stage.Checklist)
                             {
-                                var done = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
+                                // Same current-stage-only gating as the stage-detail view (2026-11-13) --
+                                // without it, every stage card shows whichever stage the item is
+                                // ACTUALLY on as "done" for any field name it shares (e.g. every
+                                // Nutrition Tracker meal stage, all identical checklists).
+                                var hasRawValue = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
+                                var done = isCurrent && hasRawValue;
                                 <div style="opacity:0.75; font-size:0.9em;">@(done ? "☑" : "☐") @ChecklistLabel(stage, field)</div>
                             }
                         </div>
@@ -719,6 +738,14 @@ else
     private StageSummary? DoneNextStage()
     {
         if (_selectedItem is null || _selectedStageId is null) return null;
+        // Only offer this from the item's actual current stage, never while merely previewing a
+        // different one from the Stages list (2026-11-13) -- without this, the required-field
+        // check below reads the SAME leaked live-data bug as the checklist display: a preview of
+        // some other stage could look "already filled in" purely because its checklist happens
+        // to share field names with whatever stage the item is really on, letting Complete Stage
+        // move the item from its real current stage based on a field check that was never
+        // actually about that stage.
+        if (_selectedStageId != _selectedItem.StageId) return null;
         if (_stages!.FirstOrDefault(s => s.Id == _selectedStageId) is not { Checklist.Count: > 0 } stage) return null;
         var required = stage.Checklist.Except(stage.OptionalChecklist);
         if (!required.All(f => _selectedItem.Data.TryGetPropertyValue(f, out var v) && v is not null)) return null;
