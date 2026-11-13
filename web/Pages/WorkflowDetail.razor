@@ -54,7 +54,7 @@ else
     @if (_selectedStageId is not null && _selectedItem is not null)
     {
         <h1 style="overflow-wrap:anywhere; word-break:break-word;">
-            @ItemDisplayName(_selectedItem)
+            @ItemDisplayName(_selectedItem, _selectedStageId)
             @if (string.Equals(_workflow?.ItemLabel, "job", StringComparison.OrdinalIgnoreCase))
             {
                 <text> &mdash; @StageTitle(_selectedStageId)</text>
@@ -589,10 +589,19 @@ else
     // meal entries), which stage and which day it happened on identifies it far better than a
     // count ever could. yyyy-MM-dd first so a list of these sorts correctly as plain text, not
     // just by the underlying timestamp (2026-11-12, user request).
-    private string ItemDisplayName(ItemSummary item) =>
+    // stageId defaults to the item's own current stage (right for list rows and the overview
+    // header, where there's no notion of "which stage am I looking at" separate from the item
+    // itself) -- the stage-detail header passes _selectedStageId explicitly instead, since that
+    // can legitimately differ from the item's actual current stage (e.g. previewing Breakfast's
+    // checklist from the Stages list while the item has already moved on to Lunch); using
+    // item.StageId there unconditionally made the header always read "Lunch ..." even while
+    // looking at Breakfast's own checklist (2026-11-13 user report: "when I click on the
+    // breakfast stage, it goes to lunch" -- the checklist shown was correct, only the heading
+    // was wrong).
+    private string ItemDisplayName(ItemSummary item, string? stageId = null) =>
         string.Equals(_workflow?.ItemLabel, "job", StringComparison.OrdinalIgnoreCase)
             ? $"Job #{JobNumber(item)}"
-            : $"{StageTitle(item.StageId)} {item.CreatedAt:yyyy-MM-dd}";
+            : $"{StageTitle(stageId ?? item.StageId)} {item.CreatedAt:yyyy-MM-dd}";
 
     // No field names can be assumed in general (data is domain-agnostic jsonb), but a field
     // literally named "title" is a real convention the agent itself already uses when it creates
