@@ -78,16 +78,18 @@ else
         }
         @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("vin") == true)
         {
-            @* Camera-capture file input styled as a button -- "capture=environment" opens the
-               phone's rear camera directly instead of the photo gallery (2026-11-11). The photo
-               itself is never stored or kept around after the scan (see ScanVinAsync). *@
+            @* Photo-picker file input styled as a button (2026-11-11). No "capture" attribute --
+               that would force the camera open directly and skip the photo-library option on
+               some browsers (2026-11-12 user report: couldn't load an existing photo at all).
+               accept="image/*" alone still lets the OS offer "Take Photo" as a choice too. The
+               photo itself is never stored or kept around after the scan (see ScanVinAsync). *@
             <div style="margin-bottom:12px;">
                 <label for="vin-photo-input" class="fluent-button-like" style="display:inline-block; cursor:pointer;">
                     <FluentButton Appearance="ButtonAppearance.Primary" Disabled="_scanningVin">
                         @(_scanningVin ? "Scanning..." : "Scan VIN")
                     </FluentButton>
                 </label>
-                <InputFile id="vin-photo-input" OnChange="OnVinPhotoSelected" accept="image/*" capture="environment" style="display:none;" />
+                <InputFile id="vin-photo-input" OnChange="OnVinPhotoSelected" accept="image/*" style="display:none;" />
                 @if (_vinScanError is not null)
                 {
                     <p style="opacity:0.75; color:var(--colorPaletteRedForeground1, #c00);">@_vinScanError</p>
@@ -96,7 +98,7 @@ else
         }
         @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("protein_g") == true)
         {
-            @* Same camera-capture pattern as Scan VIN above, pointed at food instead of a VIN
+            @* Same photo-picker pattern as Scan VIN above, pointed at food instead of a VIN
                plate (2026-11-12). The photo is never stored -- see ScanFoodPhotoAsync/scan-plate. *@
             <div style="margin-bottom:12px;">
                 <label for="plate-photo-input" class="fluent-button-like" style="display:inline-block; cursor:pointer;">
@@ -104,7 +106,7 @@ else
                         @(_scanningPlate ? "Scanning..." : "Scan Plate")
                     </FluentButton>
                 </label>
-                <InputFile id="plate-photo-input" OnChange="OnFoodPhotoSelected" accept="image/*" capture="environment" style="display:none;" />
+                <InputFile id="plate-photo-input" OnChange="OnFoodPhotoSelected" accept="image/*" style="display:none;" />
                 @if (_plateScanNote is not null)
                 {
                     <p style="opacity:0.75;">@_plateScanNote</p>
