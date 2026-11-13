@@ -847,13 +847,24 @@ else
                 return;
             }
 
+            // Add to whatever's already on the item rather than overwriting it -- a meal is
+            // often scanned in more than one shot (e.g. plate, then a carton poured on top),
+            // and the second scan clobbering the first's grams instead of totaling with them
+            // silently lost half the meal (found 2026-11-13). Chat corrections ("bump protein
+            // to 30g") still go through update_data directly and still set an absolute value --
+            // only this button's own additive photo-scan path changes here.
+            double ExistingPlus(string field, double add) =>
+                (_selectedItem.Data.TryGetPropertyValue(field, out var v) && v is JsonValue jv && jv.TryGetValue<double>(out var existing)
+                    ? existing
+                    : 0) + add;
+
             await Api.UpdateDataAsync(_selectedItem.Id, new JsonObject
             {
-                ["protein_g"] = result.ProteinG,
-                ["carbs_g"] = result.CarbsG,
-                ["fat_g"] = result.FatG,
-                ["fiber_g"] = result.FiberG,
-                ["sugar_g"] = result.SugarG,
+                ["protein_g"] = ExistingPlus("protein_g", result.ProteinG),
+                ["carbs_g"] = ExistingPlus("carbs_g", result.CarbsG),
+                ["fat_g"] = ExistingPlus("fat_g", result.FatG),
+                ["fiber_g"] = ExistingPlus("fiber_g", result.FiberG),
+                ["sugar_g"] = ExistingPlus("sugar_g", result.SugarG),
             });
             _plateScanNote = result.UncertaintyNote;
             _items = await Api.GetItemsAsync(WorkflowId);
