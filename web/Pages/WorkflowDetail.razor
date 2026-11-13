@@ -62,19 +62,33 @@ else
         </h1>
         @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId) is { Checklist.Count: > 0 } selectedStage)
         {
+            @* One merged line per field instead of a checkbox list plus a separate value list
+               below it (2026-11-13, user request) -- when a value exists, it's shown right
+               before the label (with its unit glued on for _g/_lbs-style fields, e.g. "43g
+               Protein") instead of repeating the label a second time further down the page. *@
             <FluentStack Orientation="Orientation.Vertical" VerticalGap="2" Style="margin-bottom:12px;">
                 @foreach (var field in selectedStage.Checklist)
                 {
-                    var done = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
-                    <div style="opacity:0.75;">@(done ? "☑" : "☐") @ChecklistLabel(selectedStage, field)</div>
+                    var hasValue = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
+                    var (baseLabel, unit) = FieldLabelAndUnit(field);
+                    var star = selectedStage.OptionalChecklist.Contains(field) ? "" : " *";
+                    <div style="opacity:0.75; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
+                        @(hasValue ? "☑" : "☐")
+                        @if (!hasValue)
+                        {
+                            @($"{baseLabel}{star}")
+                        }
+                        else if (unit.Length > 0)
+                        {
+                            @($"{FieldText(field, v)}{unit} {baseLabel}{star}")
+                        }
+                        else
+                        {
+                            @($"{baseLabel}{star}: {FieldText(field, v)}")
+                        }
+                    </div>
                 }
             </FluentStack>
-        }
-        @foreach (var (key, value) in ItemFieldsForStage(_selectedItem, _selectedStageId))
-        {
-            <div class="field-row" style="white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
-                <span class="field-key">@ChecklistLabel(key):</span> @FieldText(key, value)
-            </div>
         }
         @if (_stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("vin") == true)
         {
@@ -610,13 +624,6 @@ else
         return item.Data.Where(kv => kv.Key != titleKey);
     }
 
-    // Which stage each field was last written at -- key: stage_id, rebuilt from this item's
-    // event history whenever a stage is selected. A null value means the field's origin stage is
-    // unknown (e.g. an item created before 2026-10-20's create_item fix, which never recorded
-    // stage_id) -- such a field won't show in ANY stage view, only pre-stage-filter data would
-    // have shown it, which is an acceptable gap for old test data.
-    private readonly Dictionary<string, string?> _fieldStage = new();
-
     private List<ItemNote>? _notes;
 
     // null stageId -> job-level notes (shown on the job overview page); a real stage id ->
@@ -626,40 +633,9 @@ else
     private List<ItemNote> NotesFor(string? stageId) =>
         _notes?.Where(n => n.StageId == stageId).ToList() ?? new List<ItemNote>();
 
-    private async Task LoadFieldStageMap(string itemId)
+    private async Task LoadNotes(string itemId)
     {
-        _fieldStage.Clear();
-        var eventsTask = Api.GetItemEventsAsync(itemId);
-        var notesTask = Api.GetNotesAsync(itemId);
-        var events = await eventsTask;
-        _notes = await notesTask;
-        foreach (var e in events)
-        {
-            if (e.Data is null) continue;
-            foreach (var (key, value) in e.Data)
-            {
-                if (e.EventType == "item.data_changed" && value is null)
-                    _fieldStage.Remove(key);
-                else if (e.EventType is "item.created" or "item.data_changed")
-                    _fieldStage[key] = e.StageId;
-            }
-        }
-    }
-
-    // A field shows under a stage if either: it's on that stage's own checklist (regardless of
-    // when it was actually written -- 2026-11-06: a field is routinely filled in one message
-    // before the user confirms moving to the stage it belongs to, e.g. "scheduled_at" typed while
-    // still in Intake, right before confirming the move to Scheduling, so it got Intake-tagged
-    // and never showed under Scheduling despite Scheduling's own checklist marking it done); or
-    // it was last written while that stage was active and isn't on any checklist, i.e. an ad-hoc
-    // field with no declared home stage (2026-10-25: the original behavior, still wanted for
-    // those -- an Intake-only field set later while sitting at Scheduling shouldn't show there).
-    private IEnumerable<KeyValuePair<string, JsonNode?>> ItemFieldsForStage(ItemSummary item, string? stageId)
-    {
-        var checklist = _stages?.FirstOrDefault(s => s.Id == stageId)?.Checklist ?? [];
-        return ItemFields(item).Where(kv =>
-            checklist.Contains(kv.Key) ||
-            (_fieldStage.TryGetValue(kv.Key, out var s) && s == stageId));
+        _notes = await Api.GetNotesAsync(itemId);
     }
 
     private string StageTitle(string? stageId) =>
@@ -676,6 +652,22 @@ else
     // into something readable for display.
     private static string ChecklistLabel(string field) => Capitalize(field.Replace('_', ' '));
 
+    // Splits a trailing unit suffix (just "_g" and "_lbs" today -- the only units any checklist
+    // field actually uses) off the field's label, so a filled-in value can be shown as "43g
+    // Protein" instead of the field needing its unit spelled out a second time in the label
+    // itself (2026-11-13). Anything else falls back to the plain label with no unit.
+    private static readonly (string Suffix, string Unit)[] FieldUnitSuffixes = [("_g", "g"), ("_lbs", "lbs")];
+
+    private static (string Label, string Unit) FieldLabelAndUnit(string field)
+    {
+        foreach (var (suffix, unit) in FieldUnitSuffixes)
+        {
+            if (field.EndsWith(suffix, StringComparison.Ordinal))
+                return (Capitalize(field[..^suffix.Length].Replace('_', ' ')), unit);
+        }
+        return (ChecklistLabel(field), "");
+    }
+
     // A trailing "*" marks which checklist fields actually gate the Done-shortcut button (see
     // DoneNextStage) -- everything on a stage's checklist is shown either way, this just tells
     // the user which ones are optional at a glance rather than leaving it to trial and error
@@ -688,7 +680,7 @@ else
         _selectedItem = item;
         _selectedStageId = null;
         _notes = null; // show the spinner while this item's own notes load, not the last item's
-        await LoadFieldStageMap(item.Id);
+        await LoadNotes(item.Id);
     }
 
     private void StartNewJob()
@@ -701,7 +693,7 @@ else
     private async Task SelectStage(string stageId)
     {
         _selectedStageId = stageId;
-        await LoadFieldStageMap(_selectedItem!.Id);
+        await LoadNotes(_selectedItem!.Id);
     }
 
     // Same ordering as the Stages overview list -- "next" is simply the next one in sequence.
@@ -740,7 +732,7 @@ else
             _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
             _selectedStageId = toStageId;
             if (_selectedItem is not null)
-                await LoadFieldStageMap(_selectedItem.Id);
+                await LoadNotes(_selectedItem.Id);
         }
         finally
         {
@@ -779,7 +771,7 @@ else
             _items = await Api.GetItemsAsync(WorkflowId);
             _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
             if (_selectedItem is not null)
-                await LoadFieldStageMap(_selectedItem.Id);
+                await LoadNotes(_selectedItem.Id);
         }
         catch (Exception ex)
         {
@@ -831,7 +823,7 @@ else
             _items = await Api.GetItemsAsync(WorkflowId);
             _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
             if (_selectedItem is not null)
-                await LoadFieldStageMap(_selectedItem.Id);
+                await LoadNotes(_selectedItem.Id);
         }
         catch (Exception ex)
         {
@@ -955,7 +947,7 @@ else
             if (_selectedItem is not null)
                 _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
             if (_selectedItem is not null && _selectedStageId is not null)
-                await LoadFieldStageMap(_selectedItem.Id);
+                await LoadNotes(_selectedItem.Id);
 
             // New-job mode: once create_item actually lands (items grew by one), drop straight
             // into the new job's own stage view instead of leaving the user back on the Jobs
@@ -965,7 +957,7 @@ else
                 _newJobMode = false;
                 _selectedItem = _items[0];
                 _selectedStageId = _selectedItem.StageId;
-                await LoadFieldStageMap(_selectedItem.Id);
+                await LoadNotes(_selectedItem.Id);
             }
         }
         catch (Exception ex)
