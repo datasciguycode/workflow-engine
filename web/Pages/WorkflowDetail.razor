@@ -868,30 +868,41 @@ else
                     : 0) + add;
 
             var portion = _plateScanPortion is > 0 and <= 1 ? _plateScanPortion : 1;
-            var scanned = (
-                Protein: result.ProteinG * portion,
-                Carbs: result.CarbsG * portion,
-                Fat: result.FatG * portion,
-                Fiber: result.FiberG * portion,
-                Sugar: result.SugarG * portion);
+            var scanned = result.Items.Select(i => (
+                i.Food,
+                Protein: i.ProteinG * portion,
+                Carbs: i.CarbsG * portion,
+                Fat: i.FatG * portion,
+                Fiber: i.FiberG * portion,
+                Sugar: i.SugarG * portion)).ToList();
+            var totals = (
+                Protein: scanned.Sum(i => i.Protein),
+                Carbs: scanned.Sum(i => i.Carbs),
+                Fat: scanned.Sum(i => i.Fat),
+                Fiber: scanned.Sum(i => i.Fiber),
+                Sugar: scanned.Sum(i => i.Sugar));
             await Api.UpdateDataAsync(_selectedItem.Id, new JsonObject
             {
-                ["protein_g"] = ExistingPlus("protein_g", scanned.Protein),
-                ["carbs_g"] = ExistingPlus("carbs_g", scanned.Carbs),
-                ["fat_g"] = ExistingPlus("fat_g", scanned.Fat),
-                ["fiber_g"] = ExistingPlus("fiber_g", scanned.Fiber),
-                ["sugar_g"] = ExistingPlus("sugar_g", scanned.Sugar),
+                ["protein_g"] = ExistingPlus("protein_g", totals.Protein),
+                ["carbs_g"] = ExistingPlus("carbs_g", totals.Carbs),
+                ["fat_g"] = ExistingPlus("fat_g", totals.Fat),
+                ["fiber_g"] = ExistingPlus("fiber_g", totals.Fiber),
+                ["sugar_g"] = ExistingPlus("sugar_g", totals.Sugar),
             });
 
-            // Per-scan breakdown as a note (2026-11-14) -- the totals above are a running sum
-            // with no record of what each scan itself contributed, so seeing "what did the
-            // almonds have" meant nothing to look at. Reuses the existing Notes feature rather
-            // than adding a new data field, matching how corrections/context already get
-            // recorded elsewhere in this app.
+            // Per-food breakdown as a note, plus the scan's own total (2026-11-14) -- the
+            // meal-level totals above are a running sum with no record of what each food
+            // contributed, so seeing "what did the almonds have" meant nothing to look at.
+            // Reuses the existing Notes feature rather than adding a new data field (user's
+            // preference over a new food_log-style schema field).
             var portionNote = portion < 1 ? $" (portion: {portion:P0})" : "";
+            var lines = scanned.Select(i =>
+                $"  {i.Food}: {i.Protein:0.#}g protein / {i.Carbs:0.#}g carbs / {i.Fat:0.#}g fat / " +
+                $"{i.Fiber:0.#}g fiber / {i.Sugar:0.#}g sugar");
             await Api.AddNoteAsync(_selectedItem.Id,
-                $"Scanned{portionNote}: {scanned.Protein:0.#}g protein / {scanned.Carbs:0.#}g carbs / " +
-                $"{scanned.Fat:0.#}g fat / {scanned.Fiber:0.#}g fiber / {scanned.Sugar:0.#}g sugar.",
+                $"Scanned{portionNote}:\n{string.Join("\n", lines)}\n" +
+                $"Total: {totals.Protein:0.#}g protein / {totals.Carbs:0.#}g carbs / " +
+                $"{totals.Fat:0.#}g fat / {totals.Fiber:0.#}g fiber / {totals.Sugar:0.#}g sugar.",
                 _selectedStageId);
 
             _plateScanPortion = 1;

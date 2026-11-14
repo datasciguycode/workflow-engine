@@ -20,7 +20,10 @@ public record ItemNote(string Text, string? StageId, DateTimeOffset CreatedAt);
 // scan-plate's result -- null from ScanFoodPhotoAsync means the function itself judged the photo
 // unreadable/implausible (its own validation rejected it, HTTP 422), distinct from a genuine
 // request failure (which still throws, same as ScanVinAsync) (2026-11-12).
-public record FoodScanResult(double ProteinG, double CarbsG, double FatG, double FiberG, double SugarG, string UncertaintyNote);
+// Items is a per-food breakdown, not one combined total (2026-11-14) -- user wants to see what
+// each food on the plate contributed, not just the plate's lumped sum.
+public record FoodScanItem(string Food, double ProteinG, double CarbsG, double FatG, double FiberG, double SugarG);
+public record FoodScanResult(IReadOnlyList<FoodScanItem> Items, string UncertaintyNote);
 
 // Cloud project config (workflow-engine-test, pointed here 2026-10-31 replacing local dev).
 // PublishableKey is the new sb_publishable_... format (replaces the legacy JWT anon key) --
@@ -239,13 +242,17 @@ public class WorkflowApiClient
         if (!res.IsSuccessStatusCode)
             throw new HttpRequestException($"scan-plate failed ({(int)res.StatusCode}): {text}");
         var json = JsonNode.Parse(text)!.AsObject();
-        return new FoodScanResult(
-            json["protein_g"]!.GetValue<double>(),
-            json["carbs_g"]!.GetValue<double>(),
-            json["fat_g"]!.GetValue<double>(),
-            json["fiber_g"]!.GetValue<double>(),
-            json["sugar_g"]!.GetValue<double>(),
-            json["uncertainty_note"]!.GetValue<string>());
+        var items = json["items"]!.AsArray()
+            .Select(i => i!.AsObject())
+            .Select(i => new FoodScanItem(
+                i["food"]!.GetValue<string>(),
+                i["protein_g"]!.GetValue<double>(),
+                i["carbs_g"]!.GetValue<double>(),
+                i["fat_g"]!.GetValue<double>(),
+                i["fiber_g"]!.GetValue<double>(),
+                i["sugar_g"]!.GetValue<double>()))
+            .ToList();
+        return new FoodScanResult(items, json["uncertainty_note"]!.GetValue<string>());
     }
 
     // Same RPC the agent's add_note tool calls -- used directly by the chat box's "Save as

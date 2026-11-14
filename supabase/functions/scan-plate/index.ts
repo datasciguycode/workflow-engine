@@ -20,12 +20,21 @@ type RequestBody = {
   media_type: string;
 };
 
-type FoodEstimate = {
+type FoodItem = {
+  food: string;
   protein_g: number;
   carbs_g: number;
   fat_g: number;
   fiber_g: number;
   sugar_g: number;
+};
+
+// Per-food breakdown instead of one lumped total (2026-11-14) -- the user wants to see what
+// each item on the plate contributed, not just the plate's combined macros. Bounds/plausibility
+// checks below apply to the SUM across items, same thresholds as before a single-item response
+// would have hit, since a multi-item plate summing to a sane total is the point.
+type FoodEstimate = {
+  items: FoodItem[];
   uncertainty_note: string;
 };
 
@@ -52,6 +61,25 @@ const CARB_COMPONENT_SLACK_G = 1;
 const MIN_IMPLIED_KCAL = 10;
 const MAX_IMPLIED_KCAL = 3000;
 
+function parseFoodItem(raw: unknown): FoodItem | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const p = raw as Record<string, unknown>;
+  const { food, protein_g, carbs_g, fat_g, fiber_g, sugar_g } = p;
+  if (
+    typeof food !== "string" || food.trim() === "" ||
+    typeof protein_g !== "number" || !Number.isFinite(protein_g) ||
+    typeof carbs_g !== "number" || !Number.isFinite(carbs_g) ||
+    typeof fat_g !== "number" || !Number.isFinite(fat_g) ||
+    typeof fiber_g !== "number" || !Number.isFinite(fiber_g) ||
+    typeof sugar_g !== "number" || !Number.isFinite(sugar_g)
+  ) {
+    return null;
+  }
+  if (protein_g < 0 || carbs_g < 0 || fat_g < 0 || fiber_g < 0 || sugar_g < 0) return null;
+  if (fiber_g + sugar_g > carbs_g + CARB_COMPONENT_SLACK_G) return null;
+  return { food, protein_g, carbs_g, fat_g, fiber_g, sugar_g };
+}
+
 function parseEstimate(raw: string): FoodEstimate | null {
   let parsed: unknown;
   try {
@@ -62,36 +90,37 @@ function parseEstimate(raw: string): FoodEstimate | null {
   if (typeof parsed !== "object" || parsed === null) return null;
   const p = parsed as Record<string, unknown>;
 
-  const protein_g = p.protein_g;
-  const carbs_g = p.carbs_g;
-  const fat_g = p.fat_g;
-  const fiber_g = p.fiber_g;
-  const sugar_g = p.sugar_g;
-  const uncertainty_note = p.uncertainty_note;
+  if (!Array.isArray(p.items) || p.items.length === 0) return null;
+  if (typeof p.uncertainty_note !== "string") return null;
 
+  const items: FoodItem[] = [];
+  for (const raw of p.items) {
+    const item = parseFoodItem(raw);
+    if (item === null) return null;
+    items.push(item);
+  }
+
+  const totals = items.reduce(
+    (t, i) => ({
+      protein_g: t.protein_g + i.protein_g,
+      carbs_g: t.carbs_g + i.carbs_g,
+      fat_g: t.fat_g + i.fat_g,
+      fiber_g: t.fiber_g + i.fiber_g,
+      sugar_g: t.sugar_g + i.sugar_g,
+    }),
+    { protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0, sugar_g: 0 },
+  );
   if (
-    typeof protein_g !== "number" || !Number.isFinite(protein_g) ||
-    typeof carbs_g !== "number" || !Number.isFinite(carbs_g) ||
-    typeof fat_g !== "number" || !Number.isFinite(fat_g) ||
-    typeof fiber_g !== "number" || !Number.isFinite(fiber_g) ||
-    typeof sugar_g !== "number" || !Number.isFinite(sugar_g) ||
-    typeof uncertainty_note !== "string"
+    totals.protein_g > MAX_PROTEIN_G || totals.carbs_g > MAX_CARBS_G ||
+    totals.fat_g > MAX_FAT_G || totals.fiber_g > MAX_FIBER_G || totals.sugar_g > MAX_SUGAR_G
   ) {
     return null;
   }
-  if (protein_g < 0 || carbs_g < 0 || fat_g < 0 || fiber_g < 0 || sugar_g < 0) return null;
-  if (
-    protein_g > MAX_PROTEIN_G || carbs_g > MAX_CARBS_G || fat_g > MAX_FAT_G ||
-    fiber_g > MAX_FIBER_G || sugar_g > MAX_SUGAR_G
-  ) {
-    return null;
-  }
-  if (fiber_g + sugar_g > carbs_g + CARB_COMPONENT_SLACK_G) return null;
 
-  const impliedKcal = 4 * protein_g + 4 * carbs_g + 9 * fat_g;
+  const impliedKcal = 4 * totals.protein_g + 4 * totals.carbs_g + 9 * totals.fat_g;
   if (impliedKcal < MIN_IMPLIED_KCAL || impliedKcal > MAX_IMPLIED_KCAL) return null;
 
-  return { protein_g, carbs_g, fat_g, fiber_g, sugar_g, uncertainty_note };
+  return { items, uncertainty_note: p.uncertainty_note };
 }
 
 Deno.serve(async (req) => {
@@ -135,20 +164,26 @@ Deno.serve(async (req) => {
       // fail parseEstimate's JSON.parse. 1024 gives real headroom for the free-text note.
       max_tokens: 1024,
       system:
-        "You are given a photo of a plate or container of food. Estimate its nutritional " +
-        "content and respond with ONLY a single JSON object, no other text, no markdown fences, " +
-        "in exactly this shape: " +
-        '{"protein_g": <number>, "carbs_g": <number>, "fat_g": <number>, "fiber_g": <number>, ' +
-        '"sugar_g": <number>, "uncertainty_note": "<short string>"}. ' +
-        "All five nutrient values are grams, for the entire visible portion. fiber_g and sugar_g " +
-        "are both sub-components of carbs_g (same as a nutrition label breaks out Total " +
-        "Carbohydrate into Dietary Fiber and Total Sugars), so fiber_g + sugar_g must never " +
-        "exceed carbs_g. In uncertainty_note, briefly flag whatever makes this estimate less " +
-        "reliable -- e.g. no size/scale reference visible so portion size is a guess, a sauce or " +
-        "dressing that likely contains unlisted added sugar or oil, or a composite/mixed dish " +
-        "that's harder to decompose than separated whole foods. If you can't identify any food " +
-        'in the photo, respond with {"protein_g": 0, "carbs_g": 0, "fat_g": 0, "fiber_g": 0, ' +
-        '"sugar_g": 0, "uncertainty_note": "no food identified in photo"}.',
+        "You are given a photo of a plate or container of food. Identify each distinct food " +
+        "item visible and estimate its own nutritional content separately -- do not lump " +
+        "everything into one combined total. Respond with ONLY a single JSON object, no other " +
+        "text, no markdown fences, in exactly this shape: " +
+        '{"items": [{"food": "<short name>", "protein_g": <number>, "carbs_g": <number>, ' +
+        '"fat_g": <number>, "fiber_g": <number>, "sugar_g": <number>}, ...], ' +
+        '"uncertainty_note": "<short string>"}. ' +
+        "All five nutrient values per item are grams, for that item's own visible portion. " +
+        "Within each item, fiber_g and sugar_g are both sub-components of carbs_g (same as a " +
+        "nutrition label breaks out Total Carbohydrate into Dietary Fiber and Total Sugars), so " +
+        "fiber_g + sugar_g must never exceed carbs_g for that item. Keep each food's name short " +
+        "(e.g. \"almonds\", \"grilled chicken breast\"), and split genuinely distinct foods into " +
+        "separate items rather than merging them -- but a single composite dish that can't be " +
+        "decomposed by sight (e.g. a casserole) can be one item. In uncertainty_note, briefly " +
+        "flag whatever makes this estimate less reliable overall -- e.g. no size/scale reference " +
+        "visible so portion sizes are guesses, a sauce or dressing that likely contains unlisted " +
+        "added sugar or oil, or a composite dish that's harder to decompose than separated whole " +
+        "foods. If you can't identify any food in the photo, respond with " +
+        '{"items": [{"food": "none", "protein_g": 0, "carbs_g": 0, "fat_g": 0, "fiber_g": 0, ' +
+        '"sugar_g": 0}], "uncertainty_note": "no food identified in photo"}.',
       messages: [
         {
           role: "user",
