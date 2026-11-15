@@ -250,7 +250,7 @@ else
     else
     {
         <h1>@ItemLabelPlural</h1>
-        <FluentLink @onclick="StartNewJob" Class="back-link">+ New @ItemLabelSingular</FluentLink>
+        <FluentLink @onclick="StartNewJob" Class="back-link" Disabled="_creatingItem">+ New @ItemLabelSingular</FluentLink>
         <FluentLink @onclick="@(() => _showClosed = !_showClosed)" Class="back-link" Style="margin-left:16px;">
             @(_showClosed ? "Hide closed" : "Show closed")
         </FluentLink>
@@ -719,10 +719,42 @@ else
         await LoadNotes(item.Id);
     }
 
-    private void StartNewJob()
+    private bool _creatingItem;
+
+    // The mechanic workflow's Intake is loose conversational info-gathering (customer, vehicle,
+    // issue) with nothing structured to fill in yet, so it still goes through the chat-driven
+    // "+ New Job" screen. Every other workflow's initial stage (e.g. Nutrition Tracker's
+    // Breakfast) has no such intake step -- it's filled in afterward via Scan Plate or chat, the
+    // same way every other stage is -- so there's nothing to ask before the item exists, and
+    // making the user go through a chat screen that looks like but isn't yet the real stage view
+    // was just confusing (2026-11-14). item_label == "job" is the same distinction already used
+    // elsewhere in this file for job-specific display, not a one-off special case introduced here.
+    private async Task StartNewJob()
     {
-        _newJobChatStartIndex = _chatLog.Count;
-        _newJobMode = true;
+        if (string.Equals(_workflow?.ItemLabel, "job", StringComparison.OrdinalIgnoreCase))
+        {
+            _newJobChatStartIndex = _chatLog.Count;
+            _newJobMode = true;
+            return;
+        }
+
+        if (_creatingItem) return;
+        _creatingItem = true;
+        try
+        {
+            var newId = await Api.CreateItemAsync(WorkflowId);
+            _items = await Api.GetItemsAsync(WorkflowId);
+            _selectedItem = _items.FirstOrDefault(i => i.Id == newId);
+            if (_selectedItem is not null)
+            {
+                _selectedStageId = _selectedItem.StageId;
+                await LoadNotes(_selectedItem.Id);
+            }
+        }
+        finally
+        {
+            _creatingItem = false;
+        }
     }
     private void CancelNewJob() => _newJobMode = false;
 

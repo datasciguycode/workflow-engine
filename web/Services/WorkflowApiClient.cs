@@ -178,6 +178,26 @@ public class WorkflowApiClient
     // Same RPC the agent's move_stage tool calls (supabase/functions/agent-loop/index.ts) --
     // used directly by the UI's "Done" button so advancing a stage doesn't require going through
     // chat once its checklist is already complete (2026-11-05).
+    // Same RPC the agent's create_item tool calls (the no-explicit-stage overload, which always
+    // lands in whichever stage is_initial) -- used directly for workflows whose initial stage
+    // needs no chat-gathered info to exist (e.g. Nutrition Tracker's Breakfast, which only ever
+    // gets filled in by Scan Plate or a later chat correction, never at creation time) so
+    // clicking "+ New Item" doesn't force going through chat first (2026-11-14).
+    public async Task<string> CreateItemAsync(string workflowId)
+    {
+        var req = await NewRequestAsync(HttpMethod.Post, "/rest/v1/rpc/create_item");
+        req.Content = JsonContent.Create(new JsonObject { ["p_workflow_id"] = workflowId });
+        var res = await _http.SendAsync(req);
+        var text = await res.Content.ReadAsStringAsync();
+        if (!res.IsSuccessStatusCode)
+            throw new HttpRequestException($"create_item failed ({(int)res.StatusCode}): {text}");
+        // PostgREST returns a single-row RPC result as a bare object in some configurations and
+        // a one-element array in others -- handle both rather than guess (2026-11-14).
+        var node = JsonNode.Parse(text)!;
+        var obj = node is JsonArray arr ? arr[0]!.AsObject() : node.AsObject();
+        return obj["id"]!.GetValue<string>();
+    }
+
     public async Task MoveStageAsync(string itemId, string toStageId)
     {
         var req = await NewRequestAsync(HttpMethod.Post, "/rest/v1/rpc/move_stage");
