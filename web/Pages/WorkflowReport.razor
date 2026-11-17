@@ -1,0 +1,231 @@
+@page "/workflow/{WorkflowId}/report"
+@using System.Globalization
+@inject WorkflowApiClient Api
+@inject IJSRuntime JS
+
+<PageTitle>Report</PageTitle>
+
+@if (_error is not null)
+{
+    <FluentMessageBar Intent="MessageBarIntent.Error">@_error</FluentMessageBar>
+}
+else if (_workflow is null)
+{
+    <FluentSpinner />
+}
+else if (_workflow.Report is null)
+{
+    <div class="page-header">
+        <div class="page-header-back">
+            <FluentLink Href="@($"workflow/{WorkflowId}")" Class="back-link">&larr; @ItemLabelPlural</FluentLink>
+        </div>
+        <div></div>
+        <div class="page-header-toggle">
+            <ThemeToggleButton />
+        </div>
+    </div>
+    <p>This workflow has no report configured.</p>
+}
+else
+{
+    var report = _workflow.Report;
+    <div class="page-header">
+        <div class="page-header-back">
+            <FluentLink Href="@($"workflow/{WorkflowId}")" Class="back-link">&larr; @ItemLabelPlural</FluentLink>
+        </div>
+        <div></div>
+        <div class="page-header-toggle">
+            <ThemeToggleButton />
+        </div>
+    </div>
+    <h1>@_workflow.Name report</h1>
+
+    <div style="display:flex; align-items:center; justify-content:center; gap:16px; margin-bottom:16px;">
+        <FluentButton @onclick="StepBack">&lsaquo;</FluentButton>
+        <span>@PeriodLabel()</span>
+        <FluentButton Disabled="_focused == _current" @onclick="StepForward">&rsaquo;</FluentButton>
+    </div>
+
+    @if (_loading)
+    {
+        <FluentSpinner />
+    }
+    else
+    {
+        <FluentStack Orientation="Orientation.Vertical" VerticalGap="8">
+            @foreach (var field in report.Fields)
+            {
+                <FluentCard style="padding:16px; border-radius:var(--app-radius);">
+                    <h4 style="margin:0 0 4px 0;">@field.Label</h4>
+                    <div style="font-size:1.4em; font-weight:600;">@ValueText(field)</div>
+                    <div style="opacity:0.75;">@BasisText(field)</div>
+                </FluentCard>
+            }
+        </FluentStack>
+    }
+}
+
+@code {
+    [Parameter] public string WorkflowId { get; set; } = "";
+
+    private WorkflowSummary? _workflow;
+    private string? _error;
+    private bool _loading;
+    private string _tz = "UTC";
+    private DateOnly _current;
+    private DateOnly _focused;
+    private List<ReportPeriodRow>? _rows;
+
+    private string ItemLabelSingular =>
+        string.IsNullOrEmpty(_workflow?.ItemLabel) ? "Item" :
+        char.ToUpperInvariant(_workflow.ItemLabel[0]) + _workflow.ItemLabel[1..];
+    private string ItemLabelPlural => ItemLabelSingular + "s";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _workflow = await Api.GetWorkflowAsync(WorkflowId);
+            if (_workflow?.Report is null) return;
+
+            try
+            {
+                _tz = await JS.InvokeAsync<string>("getTimeZone");
+            }
+            catch
+            {
+                _tz = "UTC";
+            }
+
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            _current = PeriodStart(_workflow.Report.Period, today);
+            _focused = _current;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Couldn't load report: {ex.Message}";
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_workflow?.Report is null) return;
+        _loading = true;
+        try
+        {
+            var period = _workflow.Report.Period;
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            var from = _focused;
+            var to = NextPeriod(period, _focused).AddDays(-1);
+            if (to > today) to = today;
+
+            if (to < from)
+            {
+                _rows = [];
+            }
+            else
+            {
+                _rows = await Api.GetReportSeriesAsync(WorkflowId, from, to, _tz);
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = $"Couldn't load report: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task StepBack()
+    {
+        if (_workflow?.Report is null) return;
+        _focused = PrevPeriod(_workflow.Report.Period, _focused);
+        await LoadAsync();
+    }
+
+    private async Task StepForward()
+    {
+        if (_workflow?.Report is null) return;
+        _focused = NextPeriod(_workflow.Report.Period, _focused);
+        await LoadAsync();
+    }
+
+    private string PeriodLabel()
+    {
+        if (_workflow?.Report is null) return "";
+        var period = _workflow.Report.Period;
+        if (_focused == _current)
+        {
+            return period switch
+            {
+                "day" => "Today",
+                "month" => "This month",
+                _ => "This week",
+            };
+        }
+        return period switch
+        {
+            "day" => _focused.ToString("MMM d", CultureInfo.InvariantCulture),
+            "month" => _focused.ToString("MMMM yyyy", CultureInfo.InvariantCulture),
+            _ => $"Week of {_focused:MMM d}",
+        };
+    }
+
+    private double? Value(ReportField field) =>
+        _rows is { Count: > 0 } && _rows[0].Values.TryGetValue(field.Key, out var v) ? v : null;
+
+    private string ValueText(ReportField field)
+    {
+        var v = Value(field);
+        if (v is null) return "—";
+        var text = field.Unit == "kcal"
+            ? v.Value.ToString("N0", CultureInfo.InvariantCulture)
+            : field.Unit == "$"
+                ? (v.Value == Math.Floor(v.Value) ? v.Value.ToString("N0", CultureInfo.InvariantCulture) : v.Value.ToString("N2", CultureInfo.InvariantCulture))
+                : v.Value.ToString("0.#", CultureInfo.InvariantCulture);
+        if (string.IsNullOrEmpty(field.Unit)) return text;
+        return field.UnitPrefix ? $"{field.Unit}{text}" : $"{text} {field.Unit}";
+    }
+
+    private string BasisText(ReportField field)
+    {
+        var noun = _workflow?.Report?.ItemNoun ?? _workflow?.ItemLabel ?? "item";
+        return field.PeriodAgg switch
+        {
+            "avg" => $"avg per {noun}",
+            "sum" => "total",
+            "last" => "latest",
+            _ => "",
+        };
+    }
+
+    private static DateOnly PeriodStart(string period, DateOnly d) => period switch
+    {
+        "day" => d,
+        "week" => DateOnly.FromDateTime(ISOWeek.ToDateTime(
+                      ISOWeek.GetYear(d.ToDateTime(TimeOnly.MinValue)),
+                      ISOWeek.GetWeekOfYear(d.ToDateTime(TimeOnly.MinValue)),
+                      DayOfWeek.Monday)),
+        "month" => new DateOnly(d.Year, d.Month, 1),
+        _ => d,
+    };
+
+    private static DateOnly NextPeriod(string period, DateOnly p) => period switch
+    {
+        "day" => p.AddDays(1),
+        "week" => p.AddDays(7),
+        "month" => p.AddMonths(1),
+        _ => p.AddDays(1),
+    };
+
+    private static DateOnly PrevPeriod(string period, DateOnly p) => period switch
+    {
+        "day" => p.AddDays(-1),
+        "week" => p.AddDays(-7),
+        "month" => p.AddMonths(-1),
+        _ => p.AddDays(-1),
+    };
+}

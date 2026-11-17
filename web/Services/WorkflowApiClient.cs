@@ -3,7 +3,15 @@ using System.Text.Json.Nodes;
 
 namespace WorkflowApp.Web.Services;
 
-public record WorkflowSummary(string Id, string Name, string ItemLabel);
+// Generic Report (2026-11-15) -- parsed from workflows.report_config; see
+// 20261115010000_add_workflow_report_config.sql for the shape. ItemAgg is null for a derived field
+// (Weights non-null); both aggregation levels are required by the DB CHECK.
+public record ReportField(string Key, string Label, string Unit, bool UnitPrefix,
+    string? ItemAgg, string PeriodAgg, IReadOnlyDictionary<string, double>? Weights);
+public record ReportConfig(string Period, string? ItemNoun, List<ReportField> Fields);
+public record ReportPeriodRow(DateOnly PeriodStart, Dictionary<string, double> Values);
+
+public record WorkflowSummary(string Id, string Name, string ItemLabel, ReportConfig? Report = null);
 public record StageSummary(string Id, string Title, int? SequenceOrder, bool IsInitial, bool IsTerminal, List<string> Checklist, List<string> OptionalChecklist);
 public record ItemSummary(string Id, string StageId, JsonObject Data, DateTimeOffset CreatedAt);
 // search_items RPC result (2026-11-08) -- same shape as ItemSummary plus the job number computed
@@ -70,13 +78,108 @@ public class WorkflowApiClient
 
     public async Task<WorkflowSummary?> GetWorkflowAsync(string workflowId)
     {
-        var req = await NewRequestAsync(HttpMethod.Get, $"/rest/v1/workflows?id=eq.{workflowId}&select=id,name,item_label");
+        var req = await NewRequestAsync(HttpMethod.Get, $"/rest/v1/workflows?id=eq.{workflowId}&select=id,name,item_label,report_config");
         var res = await _http.SendAsync(req);
         res.EnsureSuccessStatusCode();
         var rows = await res.Content.ReadFromJsonAsync<List<JsonObject>>() ?? [];
         var r = rows.FirstOrDefault();
         return r is null ? null : new WorkflowSummary(
-            r["id"]!.GetValue<string>(), r["name"]!.GetValue<string>(), r["item_label"]!.GetValue<string>());
+            r["id"]!.GetValue<string>(), r["name"]!.GetValue<string>(), r["item_label"]!.GetValue<string>(),
+            ParseReportConfig(r["report_config"]));
+    }
+
+    // Defensive mirror of the DB CHECK (workflows_report_config_shape), not a second source of
+    // aggregation defaults -- never throws, skips anything it can't make sense of (2026-11-15).
+    private static ReportConfig? ParseReportConfig(JsonNode? node)
+    {
+        if (node is null || node is JsonValue v && v.TryGetValue<object?>(out var o) && o is null)
+            return null;
+        if (node is not JsonObject obj) return null;
+
+        var period = obj["period"]?.GetValue<string>();
+        if (period is not ("day" or "week" or "month")) return null;
+
+        var itemNoun = obj["item_noun"] is JsonValue inv && inv.TryGetValue<string>(out var iv) ? iv : null;
+
+        var fields = new List<ReportField>();
+        if (obj["fields"] is JsonArray fieldsArr)
+        {
+            foreach (var fn in fieldsArr)
+            {
+                if (fn is not JsonObject f) continue;
+                var key = f["key"] is JsonValue kv && kv.TryGetValue<string>(out var k) ? k : null;
+                if (string.IsNullOrEmpty(key)) continue;
+                var periodAgg = f["period_agg"]?.GetValue<string>();
+                if (periodAgg is not ("sum" or "avg" or "last")) continue;
+
+                string? itemAgg = null;
+                IReadOnlyDictionary<string, double>? weights = null;
+                if (f["weights"] is JsonObject weightsObj)
+                {
+                    var w = new Dictionary<string, double>();
+                    var ok = true;
+                    foreach (var (wk, wv) in weightsObj)
+                    {
+                        if (wv is JsonValue wval && wval.TryGetValue<double>(out var wd)) w[wk] = wd;
+                        else { ok = false; break; }
+                    }
+                    if (!ok) continue;
+                    weights = w;
+                }
+                else
+                {
+                    itemAgg = f["item_agg"]?.GetValue<string>();
+                    if (itemAgg is not ("sum" or "avg" or "last")) continue;
+                }
+
+                var label = f["label"] is JsonValue lv && lv.TryGetValue<string>(out var l) ? l : HumanizeKey(key);
+                var unit = f["unit"] is JsonValue uv && uv.TryGetValue<string>(out var u) ? u : "";
+                var unitPrefix = f["unit_position"] is JsonValue upv && upv.TryGetValue<string>(out var up) && up == "prefix";
+
+                fields.Add(new ReportField(key, label, unit, unitPrefix, itemAgg, periodAgg, weights));
+            }
+        }
+        if (fields.Count == 0) return null;
+
+        return new ReportConfig(period, itemNoun, fields);
+    }
+
+    private static string HumanizeKey(string key)
+    {
+        var withoutUnit = key.EndsWith("_g") ? key[..^2]
+            : key.EndsWith("_lbs") ? key[..^4]
+            : key;
+        var spaced = withoutUnit.Replace('_', ' ');
+        return spaced.Length == 0 ? spaced : char.ToUpperInvariant(spaced[0]) + spaced[1..];
+    }
+
+    // Generic weekly/daily/monthly figures (2026-11-15), driven entirely by workflows.report_config
+    // -- see report_series in 20261115010000_add_workflow_report_config.sql.
+    public async Task<List<ReportPeriodRow>> GetReportSeriesAsync(string workflowId, DateOnly from, DateOnly to, string tz)
+    {
+        var req = await NewRequestAsync(HttpMethod.Post, "/rest/v1/rpc/report_series");
+        req.Content = JsonContent.Create(new JsonObject
+        {
+            ["p_workflow_id"] = workflowId,
+            ["p_from"] = from.ToString("yyyy-MM-dd"),
+            ["p_to"] = to.ToString("yyyy-MM-dd"),
+            ["p_tz"] = tz,
+        });
+        var res = await _http.SendAsync(req);
+        res.EnsureSuccessStatusCode();
+        var rows = await res.Content.ReadFromJsonAsync<List<JsonObject>>() ?? [];
+        return rows.Select(r =>
+        {
+            var values = new Dictionary<string, double>();
+            if (r["field_values"] is JsonObject fv)
+            {
+                foreach (var (k, v) in fv)
+                {
+                    if (v is JsonValue jv && jv.TryGetValue<double>(out var d)) values[k] = d;
+                }
+            }
+            return new ReportPeriodRow(DateOnly.Parse(r["period_start"]!.GetValue<string>()), values);
+        }).ToList();
     }
 
     public async Task<List<StageSummary>> GetStagesAsync(string workflowId)
@@ -144,6 +247,9 @@ public class WorkflowApiClient
     // deriving which stage a data field belongs to: item.created/item.data_changed events already
     // carry stage_id (fixed 2026-10-20) and the data/patch that was written, so replaying them in
     // order gives "this key was last written while at stage X" (2026-10-25).
+    // Since 20261115000000, item.stage_changed events also carry data = {"cleared": {...}}. Any
+    // future replay of events to derive per-key values must filter to
+    // item.created/item.data_changed, otherwise a cleared snapshot gets mistaken for a patch.
     public async Task<List<ItemEventRow>> GetItemEventsAsync(string itemId)
     {
         var req = await NewRequestAsync(HttpMethod.Get,

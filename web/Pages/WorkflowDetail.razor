@@ -254,6 +254,7 @@ else
         <FluentLink @onclick="@(() => _showClosed = !_showClosed)" Class="back-link" Style="margin-left:16px;">
             @(_showClosed ? "Hide closed" : "Show closed")
         </FluentLink>
+        @if (_workflow?.Report is not null) { <FluentLink Href="@($"workflow/{WorkflowId}/report")" Class="back-link" Style="margin-left:16px;">Report</FluentLink> }
 
         @* Tap-to-search (2026-11-08): no live-as-you-type filtering, so searching never fires a
            request per keystroke -- the box just holds text until Search is tapped, and runs
@@ -628,7 +629,8 @@ else
     private string ItemDisplayName(ItemSummary item, string? stageId = null) =>
         string.Equals(_workflow?.ItemLabel, "job", StringComparison.OrdinalIgnoreCase)
             ? $"Job #{JobNumber(item)}"
-            : $"{StageTitle(stageId ?? item.StageId)} {item.CreatedAt:yyyy-MM-dd}";
+            // .ToLocalTime() (2026-11-15): matches the report's local-day bucketing.
+            : $"{StageTitle(stageId ?? item.StageId)} {item.CreatedAt.ToLocalTime():yyyy-MM-dd}";
 
     // No field names can be assumed in general (data is domain-agnostic jsonb), but a field
     // literally named "title" is a real convention the agent itself already uses when it creates
