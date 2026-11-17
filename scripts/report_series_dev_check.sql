@@ -148,7 +148,7 @@ begin
   perform public.move_stage(d_a, v_br);
   select data into v_ev from public.item_events
   where item_id = d_a and event_type = 'item.stage_changed' order by seq desc limit 1;
-  if v_ev is distinct from '{"cleared": {"protein_g": 30, "weight_lbs": 180}}'::jsonb then
+  if v_ev is distinct from '{"cleared": {"protein_g": 30, "weight_lbs": 180, "carbs_g": null, "fat_g": null, "fiber_g": null, "sugar_g": null}}'::jsonb then
     raise exception 'FAIL snapshot: %', v_ev;
   end if;
   perform public.update_data(d_a, '{"protein_g": 20}');
