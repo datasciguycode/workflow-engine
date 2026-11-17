@@ -29,20 +29,21 @@ Prod is behind dev. None of these have been ported:
   applied, local + dev write-path checks pass (`scripts/report_series_dev_check.sql`), mechanic
   dry run confirms the engine generalizes (`scripts/report_mechanic_dry_run.sql`), live phone
   checks on the deployed page match the database exactly.
+- **`move_stage` backward-move fix (2026-11-17, `20261116000000`)**: every sequenced move
+  (forward or backward) now saves the departing stage's shared-field values and restores the
+  arriving stage's own latest snapshot, so `item.data` always holds the current stage's real
+  value or nothing. Fixes the residual limitation left by the Report feature's forward-only
+  snapshotting. User accepted the one visible behavior change (going back to a stage now shows
+  that stage's own earlier values, not whatever's currently in `item.data`). Depends on
+  `20261113000000` and `20261115000000`. Full design/decision trail:
+  `plans/move-stage-backward-snapshot/final-plan.md`. Verified on dev: defect reproduced against
+  the pre-fix function, fix confirmed, `scripts/report_series_dev_check.sql` and the new
+  `scripts/move_stage_backward_dev_check.sql` both pass post-push, real Nutrition Tracker report
+  output unchanged.
 
 `plans/diet-workflow/test-plate.jpg` is intentionally **not** committed (personal photo, public
 repo).
 
-## Known limitation (accepted for now, follow-up needed)
-
-`move_stage`'s per-stage value snapshotting (added for the Report feature, 20261115000000)
-only captures what a *forward* move clears. Backing out of a stage without editing it, then
-moving forward again, silently replaces that stage's real snapshot with the carried-over value
-(which actually belongs to a different stage) — `move_stage` never clears or restores anything
-on a backward move. Accepted as a known gap for this rollout (user decision, 2026-11-16); the
-next concrete step is to run this through its own plan-pipeline pass as an immediate follow-up.
-
 ## Outstanding
 
 - Decide whether/when to port dev's accumulated features (listed above) to prod.
-- Plan and fix the `move_stage` backward-move residual limitation above.
