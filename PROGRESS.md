@@ -44,6 +44,28 @@ Prod is behind dev. None of these have been ported:
 `plans/diet-workflow/test-plate.jpg` is intentionally **not** committed (personal photo, public
 repo).
 
+## In progress: Rideshare Mileage/Expenses workflows
+
+Vetted plan (plan-pipeline, approved-with-changes): `plans/uber-mileage-tracker/final-plan.md`.
+Two dev-only workflows for Uber/Lyft drivers — "Rideshare Mileage" (shift-level odometer-photo
+scan at Start/End, derived miles/hours, optional tolls/parking/earnings) and "Rideshare Expenses"
+(flat category/amount/date log) — plus four generic report-engine extensions (signed derived
+weights, hidden fields, timestamp parsing, item_date_key) that the Mileage workflow needs. GPS/
+reverse-geocoding was dropped in favor of plain manual address text fields after further
+discussion with the user; no third-party geocoding service is used anywhere in this feature.
+
+**Done:** Step 1 — engine migration written
+(`20261120000000_report_engine_signed_weights_timestamps_date_key.sql`), committed, **not yet
+applied to dev's DB**.
+
+**Next concrete step:** Step 2 — write the content migration
+(`20261120010000_add_rideshare_workflows.sql`) adding the two workflows/stages/report_config, then
+Step 3 (update dev-check scripts) before Step 4 pushes both migrations to dev and diffs Nutrition
+Tracker's report output before/after to confirm it's unchanged.
+
 ## Outstanding
 
 - Decide whether/when to port dev's accumulated features (listed above) to prod.
+- `closed_at` migration (`20261119000000`, committed to dev's repo) still needs to be applied to
+  prod's live DB and to prod's `bootstrap.sql`/`create_test_account.sql` — tracked in this
+  session's memory as a to-do, not yet resumed.
