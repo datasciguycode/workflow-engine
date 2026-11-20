@@ -41,7 +41,9 @@ begin
     'start_odometer', 48200, 'end_odometer', 48290,
     'start_time', '2026-01-07T05:30:00Z', 'end_time', '2026-01-07T09:30:00Z'));
 
-  select field_values into v_fv from public.report_series(v_mi, '2026-01-05', '2026-01-05', 'America/Chicago');
+  -- query the full week: item_date_key buckets by start_time's local date (Jan 5 and Jan 6
+  -- respectively for shifts A and B), not by created_at, so a single-day query would miss B.
+  select field_values into v_fv from public.report_series(v_mi, '2026-01-05', '2026-01-11', 'America/Chicago');
   if (v_fv ->> 'miles')::numeric is distinct from 213 then
     raise exception 'FAIL case1 miles: % (want 213)', v_fv;
   end if;
@@ -50,11 +52,11 @@ begin
   end if;
 
   ---------------------------------------------------------------- 2. an in-progress shift (start only)
-  select item_count into v_rows from public.report_series(v_mi, '2026-01-05', '2026-01-05', 'America/Chicago');
+  select item_count into v_rows from public.report_series(v_mi, '2026-01-05', '2026-01-11', 'America/Chicago');
   perform public.create_item(v_mi, jsonb_build_object(
     'start_odometer', 48300, 'start_time', '2026-01-06T14:00:00Z'));
-  select field_values into v_fv from public.report_series(v_mi, '2026-01-05', '2026-01-05', 'America/Chicago');
-  if (select item_count from public.report_series(v_mi, '2026-01-05', '2026-01-05', 'America/Chicago')) is distinct from v_rows + 1 then
+  select field_values into v_fv from public.report_series(v_mi, '2026-01-05', '2026-01-11', 'America/Chicago');
+  if (select item_count from public.report_series(v_mi, '2026-01-05', '2026-01-11', 'America/Chicago')) is distinct from v_rows + 1 then
     raise exception 'FAIL case2: item_count did not rise by 1';
   end if;
   if (v_fv ->> 'miles')::numeric is distinct from 213 or abs((v_fv ->> 'hours')::numeric - 12.5) >= 1e-6 then
@@ -68,7 +70,7 @@ begin
   perform public.create_item(v_mi, jsonb_build_object(
     'start_odometer', 48500, 'end_odometer', 48550,
     'start_time', '2026-01-09T14:00:00Z', 'end_time', '2026-13-01T00:00:00Z'));
-  select field_values into v_fv from public.report_series(v_mi, '2026-01-05', '2026-01-05', 'America/Chicago');
+  select field_values into v_fv from public.report_series(v_mi, '2026-01-05', '2026-01-11', 'America/Chicago');
   if abs((v_fv ->> 'hours')::numeric - 12.5) >= 1e-6 then
     raise exception 'FAIL case3: malformed end_time contributed hours: %', v_fv;
   end if;
@@ -89,15 +91,15 @@ begin
   update public.items set created_at = '2026-01-02 15:00-06' where id = d_z;
   set local role authenticated;
 
-  select field_values into v_fv from public.report_series(v_ex, '2025-12-01', '2025-12-01', 'America/Chicago');
+  select field_values into v_fv from public.report_series(v_ex, '2025-12-01', '2025-12-31', 'America/Chicago');
   if (v_fv ->> 'gas_usd')::numeric is distinct from 40 then
     raise exception 'FAIL case4: expense X (date 2025-12-31) should bucket into December: %', v_fv;
   end if;
-  select field_values into v_fv from public.report_series(v_ex, '2026-01-01', '2026-01-01', 'America/Chicago');
+  select field_values into v_fv from public.report_series(v_ex, '2026-01-01', '2026-01-31', 'America/Chicago');
   if (v_fv ->> 'phone_usd')::numeric is distinct from 10 then
     raise exception 'FAIL case4: expense Y (unparseable date "Dec 31") should fall back to created_at (January): %', v_fv;
   end if;
-  if (select item_count from public.report_series(v_ex, '2026-01-01', '2026-01-01', 'America/Chicago')) < 2 then
+  if (select item_count from public.report_series(v_ex, '2026-01-01', '2026-01-31', 'America/Chicago')) < 2 then
     raise exception 'FAIL case4: expense Z (no date) should also fall back to January';
   end if;
 
