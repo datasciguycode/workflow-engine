@@ -54,14 +54,19 @@ weights, hidden fields, timestamp parsing, item_date_key) that the Mileage workf
 reverse-geocoding was dropped in favor of plain manual address text fields after further
 discussion with the user; no third-party geocoding service is used anywhere in this feature.
 
-**Done:** Step 1 — engine migration written
-(`20261120000000_report_engine_signed_weights_timestamps_date_key.sql`), committed, **not yet
-applied to dev's DB**.
+**Done:** Steps 1–4. Both migrations (`20261120000000` engine extensions,
+`20261120010000_add_rideshare_workflows.sql`) are applied to dev. `scripts/report_series_dev_check.sql`
+(37 reject cases + 2 accept cases) and the new `scripts/rideshare_report_dev_check.sql` (two-shift
+week miles/hours, in-progress shift, malformed `end_time`, expense date bucketing) both PASS.
+Nutrition Tracker's report output is byte-identical before/after. The two Rideshare workflows and
+their report configs now exist on dev; no UI/edge-function work has happened yet.
 
-**Next concrete step:** Step 2 — write the content migration
-(`20261120010000_add_rideshare_workflows.sql`) adding the two workflows/stages/report_config, then
-Step 3 (update dev-check scripts) before Step 4 pushes both migrations to dev and diffs Nutrition
-Tracker's report output before/after to confirm it's unchanged.
+**Next concrete step:** Step 5 — edge functions: `scan-odometer` (copied from `scan-plate`'s
+one-shot vision pattern) and the generic `agent-loop` change so the chat agent knows today's date
+(needed for expenses logged by relative date, e.g. "$42.10 gas yesterday"). Then Step 6 (web
+changes: odometer capture block, `_usd`/date-only field rendering, the Jobs-list "closed" rule
+change, display-name disambiguation for same-day items). Full spec in
+`plans/uber-mileage-tracker/final-plan.md`.
 
 ## Outstanding
 
