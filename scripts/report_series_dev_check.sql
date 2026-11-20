@@ -93,8 +93,6 @@ begin
     '{"period": "week", "fields": [{"key": "x", "item_agg": "sum", "period_agg": "avg"}, {"key": "k", "period_agg": "avg", "weights": null}]}',
     -- zero weight
     '{"period": "week", "fields": [{"key": "x", "item_agg": "sum", "period_agg": "avg"}, {"key": "k", "period_agg": "avg", "weights": {"x": 0}}]}',
-    -- negative weight
-    '{"period": "week", "fields": [{"key": "x", "item_agg": "sum", "period_agg": "avg"}, {"key": "k", "period_agg": "avg", "weights": {"x": -4}}]}',
     -- JSON-null fields
     '{"period": "week", "fields": null}',
     -- item_requires: unknown key
@@ -108,14 +106,37 @@ begin
     -- item_requires: JSON null
     '{"period": "week", "item_requires": null, "fields": [{"key": "x", "item_agg": "sum", "period_agg": "avg"}]}',
     -- item_requires: non-string entry
-    '{"period": "week", "item_requires": [5], "fields": [{"key": "x", "item_agg": "sum", "period_agg": "avg"}]}'
+    '{"period": "week", "item_requires": [5], "fields": [{"key": "x", "item_agg": "sum", "period_agg": "avg"}]}',
+    -- hidden not a boolean
+    '{"period": "week", "fields": [{"key": "x", "hidden": "yes", "item_agg": "sum", "period_agg": "avg"}]}',
+    -- parse not "timestamp"
+    '{"period": "week", "fields": [{"key": "x", "parse": "date", "item_agg": "sum", "period_agg": "avg"}]}',
+    -- parse on a derived field
+    '{"period": "week", "fields": [{"key": "x", "item_agg": "sum", "period_agg": "avg"}, {"key": "k", "parse": "timestamp", "period_agg": "avg", "weights": {"x": 1}}]}',
+    -- empty item_date_key
+    '{"period": "week", "item_date_key": "", "fields": [{"key": "x", "item_agg": "sum", "period_agg": "avg"}]}',
+    -- non-string item_date_key
+    '{"period": "week", "item_date_key": 5, "fields": [{"key": "x", "item_agg": "sum", "period_agg": "avg"}]}'
   ] loop
     begin
       update public.workflows set report_config = c::jsonb where id = v_wf;
       raise exception 'FAIL check: accepted %', c;
     exception when check_violation then v_rej := v_rej + 1; end;
   end loop;
-  if v_rej <> 33 then raise exception 'FAIL check count: % of 33 rejected', v_rej; end if;
+  if v_rej <> 37 then raise exception 'FAIL check count: % of 37 rejected', v_rej; end if;
+
+  ---------------------------------------------------------------- 1b. CHECK constraint: now-valid / new-valid configs must be accepted
+  foreach c in array array[
+    -- negative weight (now valid)
+    '{"period": "week", "fields": [{"key": "x", "item_agg": "sum", "period_agg": "avg"}, {"key": "k", "period_agg": "avg", "weights": {"x": -4}}]}',
+    -- note + item_date_key + hidden + parse
+    '{"period": "week", "note": "hi", "item_date_key": "d", "fields": [{"key": "t", "hidden": true, "parse": "timestamp", "item_agg": "last", "period_agg": "last"}]}'
+  ] loop
+    begin
+      update public.workflows set report_config = c::jsonb where id = v_wf;
+    exception when check_violation then raise exception 'FAIL check: rejected %', c;
+    end;
+  end loop;
 
   -- Checks 2-5 test D1 (per-stage snapshots) on Mon, which only ever logs protein; under the shipped
   -- item_requires Mon would be dropped from every field. Run them without the gate; check 6
