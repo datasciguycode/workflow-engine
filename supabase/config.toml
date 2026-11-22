@@ -401,6 +401,10 @@ verify_jwt = false
 [functions.scan-plate]
 verify_jwt = true
 
+# scan-odometer: same reasoning as scan-plate above.
+[functions.scan-odometer]
+verify_jwt = true
+
 [analytics]
 enabled = true
 port = 54327

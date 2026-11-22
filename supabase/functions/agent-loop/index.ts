@@ -62,6 +62,11 @@ type RequestBody = {
   // instead of letting it accumulate as raw chat text (2026-11-07) -- notes are plain stored
   // text, never replayed into later requests, so they don't grow token cost the way chat does.
   selected_stage_message_count?: number;
+  // The client's local date, e.g. "2026-11-20 (Friday)" (2026-11-20, for the rideshare Expenses
+  // workflow's relative-date logging -- "$42.10 gas yesterday"). Validated against a strict
+  // regex before use; an older client or an unexpected shape just omits the date line below,
+  // same as today.
+  client_local_date?: string;
 };
 
 // Thin wrapper around PostgREST, forwarding the CALLER's own JWT (not the service role key) so
@@ -242,6 +247,7 @@ function systemPrompt(
   selectedStageTitle?: string,
   selectedItemDisplayName?: string,
   selectedStageMessageCount?: number,
+  clientLocalDate?: string,
 ) {
   // Restated close to every turn (this whole prompt is rebuilt fresh each request) and reinforced
   // by move_stage/update_data/add_note's own tool descriptions, because a full unscoped message
@@ -265,6 +271,9 @@ function systemPrompt(
   const stageContext = selectedStageTitle
     ? `drilled into its "${selectedStageTitle}" stage's own view`
     : "on its own overview page (no particular stage drilled into)";
+  const dateLine = clientLocalDate && /^\d{4}-\d{2}-\d{2} \(\w+\)$/.test(clientLocalDate)
+    ? `\nToday's date in the user's local time zone is ${clientLocalDate}. Resolve relative dates ("yesterday", "last Friday") against it. Write a date-only field (a key named "date") as YYYY-MM-DD; write a date-time field as ISO 8601 with an offset.\n`
+    : "";
   const selectedContext = selectedItemId
     ? `\nTHE USER IS CURRENTLY LOOKING AT ONE SPECIFIC ITEM: ${selectedItemDisplayName ?? selectedItemLabel ?? selectedItemId} (id ${selectedItemId}), ${stageContext}. For move_stage, update_data, and add_note: omit item_id entirely to target this item -- that is the default and correct choice for any message that doesn't clearly name a different item, REGARDLESS of which other items were created or discussed earlier in this same conversation. Only pass an explicit item_id when the user's current message itself names a different item (by a number or label shown on screen, or a distinguishing detail) or asks to act on an item other than this one. Don't ask "which one?" just because other items also exist in the queue below -- the open one always wins unless the message says otherwise. A note added here is automatically tagged with the stage named above, if any -- it's an item-level note (no stage) when the user is on the overview page.${noteNudge}\n`
     : "";
@@ -272,7 +281,7 @@ function systemPrompt(
 
 Active workflow's stages (id, title, sequence_order, is_initial, is_terminal, checklist):
 ${JSON.stringify(stages)}
-A stage's checklist, where present, lists the data.* field keys typically filled in at that stage
+${dateLine}A stage's checklist, where present, lists the data.* field keys typically filled in at that stage
 (e.g. a mechanic-shop intake stage: customer, phone, address; a nutrition-log breakfast stage:
 protein_g, carbs_g, fat_g) -- a soft guide for what to ask about, not a hard requirement. Not
 every item needs every checklist item filled in, and a missing one should never block creating
@@ -389,6 +398,7 @@ Deno.serve(async (req) => {
           body.selected_stage_title,
           body.selected_item_display_name,
           body.selected_stage_message_count,
+          body.client_local_date,
         ),
         tools: TOOLS,
         thinking: { type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } },

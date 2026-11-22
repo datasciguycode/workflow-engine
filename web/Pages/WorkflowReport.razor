@@ -40,6 +40,13 @@ else
     </div>
     <h1>@_workflow.Name report</h1>
 
+    @if (report.Note is not null)
+    {
+        @* About the workflow as a whole, not the selected period, so it sits above the stepper
+           and doesn't move as the driver pages through weeks/months (2026-11-20). *@
+        <p style="opacity:0.75;">@report.Note</p>
+    }
+
     <div style="display:flex; align-items:center; justify-content:center; gap:16px; margin-bottom:16px;">
         <FluentButton @onclick="StepBack">&lsaquo;</FluentButton>
         <span>@PeriodLabel()</span>
@@ -53,7 +60,10 @@ else
     else
     {
         <FluentStack Orientation="Orientation.Vertical" VerticalGap="8">
-            @foreach (var field in report.Fields)
+            @* Hidden fields (2026-11-20, e.g. Rideshare Mileage's start_odometer/start_time) exist
+               only so the engine's derived-field validation passes -- they're real entries in
+               report.Fields but were never meant to get their own card. *@
+            @foreach (var field in report.Fields.Where(f => !f.Hidden))
             {
                 <FluentCard style="padding:16px; border-radius:var(--app-radius);">
                     <h4 style="margin:0 0 4px 0;">@field.Label</h4>

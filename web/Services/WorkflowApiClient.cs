@@ -7,8 +7,8 @@ namespace WorkflowApp.Web.Services;
 // 20261115010000_add_workflow_report_config.sql for the shape. ItemAgg is null for a derived field
 // (Weights non-null); both aggregation levels are required by the DB CHECK.
 public record ReportField(string Key, string Label, string Unit, bool UnitPrefix,
-    string? ItemAgg, string PeriodAgg, IReadOnlyDictionary<string, double>? Weights);
-public record ReportConfig(string Period, string? ItemNoun, List<ReportField> Fields);
+    string? ItemAgg, string PeriodAgg, IReadOnlyDictionary<string, double>? Weights, bool Hidden = false);
+public record ReportConfig(string Period, string? ItemNoun, List<ReportField> Fields, string? Note = null);
 public record ReportPeriodRow(DateOnly PeriodStart, Dictionary<string, double> Values);
 
 public record WorkflowSummary(string Id, string Name, string ItemLabel, ReportConfig? Report = null);
@@ -32,6 +32,8 @@ public record ItemNote(string Text, string? StageId, DateTimeOffset CreatedAt);
 // each food on the plate contributed, not just the plate's lumped sum.
 public record FoodScanItem(string Food, double ProteinG, double CarbsG, double FatG, double FiberG, double SugarG);
 public record FoodScanResult(IReadOnlyList<FoodScanItem> Items, string UncertaintyNote);
+// scan-odometer's result (2026-11-20) -- same null-on-422 contract as FoodScanResult.
+public record OdometerScanResult(double Reading, string Unit, string Note);
 
 // Cloud project config (workflow-engine-test, pointed here 2026-10-31 replacing local dev).
 // PublishableKey is the new sb_publishable_... format (replaces the legacy JWT anon key) --
@@ -100,6 +102,7 @@ public class WorkflowApiClient
         if (period is not ("day" or "week" or "month")) return null;
 
         var itemNoun = obj["item_noun"] is JsonValue inv && inv.TryGetValue<string>(out var iv) ? iv : null;
+        var note = obj["note"] is JsonValue nv && nv.TryGetValue<string>(out var n) ? n : null;
 
         var fields = new List<ReportField>();
         if (obj["fields"] is JsonArray fieldsArr)
@@ -136,12 +139,14 @@ public class WorkflowApiClient
                 var unit = f["unit"] is JsonValue uv && uv.TryGetValue<string>(out var u) ? u : "";
                 var unitPrefix = f["unit_position"] is JsonValue upv && upv.TryGetValue<string>(out var up) && up == "prefix";
 
-                fields.Add(new ReportField(key, label, unit, unitPrefix, itemAgg, periodAgg, weights));
+                var hidden = f["hidden"] is JsonValue hv && hv.TryGetValue<bool>(out var h) && h;
+
+                fields.Add(new ReportField(key, label, unit, unitPrefix, itemAgg, periodAgg, weights, hidden));
             }
         }
         if (fields.Count == 0) return null;
 
-        return new ReportConfig(period, itemNoun, fields);
+        return new ReportConfig(period, itemNoun, fields, note);
     }
 
     private static string HumanizeKey(string key)
@@ -381,6 +386,28 @@ public class WorkflowApiClient
         return new FoodScanResult(items, json["uncertainty_note"]!.GetValue<string>());
     }
 
+    // 422 means scan-odometer's own validation judged the reading unreliable (not a request
+    // failure) -- same null-on-422 contract as ScanFoodPhotoAsync/ScanVinAsync.
+    public async Task<OdometerScanResult?> ScanOdometerAsync(string imageBase64, string mediaType)
+    {
+        var req = await NewRequestAsync(HttpMethod.Post, "/functions/v1/scan-odometer");
+        req.Content = JsonContent.Create(new JsonObject
+        {
+            ["image_base64"] = imageBase64,
+            ["media_type"] = mediaType,
+        });
+        var res = await _http.SendAsync(req);
+        var text = await res.Content.ReadAsStringAsync();
+        if (res.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity) return null;
+        if (!res.IsSuccessStatusCode)
+            throw new HttpRequestException($"scan-odometer failed ({(int)res.StatusCode}): {text}");
+        var json = JsonNode.Parse(text)!.AsObject();
+        return new OdometerScanResult(
+            json["reading"]!.GetValue<double>(),
+            json["unit"]!.GetValue<string>(),
+            json["note"]!.GetValue<string>());
+    }
+
     // Same RPC the agent's add_note tool calls -- used directly by the chat box's "Save as
     // note" checkbox so logging a note is deterministic and doesn't require an AI round trip
     // at all (2026-11-08). stageId is the stage page the note was saved from, or null when saved
@@ -404,7 +431,8 @@ public class WorkflowApiClient
     public async Task<(string Reply, JsonArray Messages)> SendAgentMessageAsync(
         string workflowId, JsonArray queue, JsonArray messages,
         string? selectedItemId = null, string? selectedItemLabel = null, string? selectedStageTitle = null,
-        string? selectedStageId = null, string? selectedItemDisplayName = null, int? selectedStageMessageCount = null)
+        string? selectedStageId = null, string? selectedItemDisplayName = null, int? selectedStageMessageCount = null,
+        string? clientLocalDate = null)
     {
         var body = new JsonObject
         {
@@ -417,6 +445,7 @@ public class WorkflowApiClient
             ["selected_stage_id"] = selectedStageId,
             ["selected_item_display_name"] = selectedItemDisplayName,
             ["selected_stage_message_count"] = selectedStageMessageCount,
+            ["client_local_date"] = clientLocalDate,
         };
         var req = await NewRequestAsync(HttpMethod.Post, "/functions/v1/agent-loop");
         req.Content = JsonContent.Create(body);

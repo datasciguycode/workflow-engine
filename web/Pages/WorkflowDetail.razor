@@ -78,7 +78,7 @@ else
                 {
                     var hasRawValue = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
                     var hasValue = onCurrentStage && hasRawValue;
-                    var (baseLabel, unit) = FieldLabelAndUnit(field);
+                    var (baseLabel, unit, unitPrefix) = FieldLabelAndUnit(field);
                     var star = selectedStage.OptionalChecklist.Contains(field) ? "" : " *";
                     <div style="opacity:0.75; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
                         @(hasValue ? "☑" : "☐")
@@ -88,7 +88,9 @@ else
                         }
                         else if (unit.Length > 0)
                         {
-                            @($"{FieldText(field, v)}{unit} {baseLabel}{star}")
+                            @(unitPrefix
+                                ? $"{unit}{UnitValueText(field, v, unit)} {baseLabel}{star}"
+                                : $"{UnitValueText(field, v, unit)}{unit} {baseLabel}{star}")
                         }
                         else
                         {
@@ -150,6 +152,70 @@ else
                 @if (_plateScanError is not null)
                 {
                     <p style="opacity:0.75; color:var(--colorPaletteRedForeground1, #c00);">@_plateScanError</p>
+                }
+            </div>
+        }
+        @if (_selectedStageId == _selectedItem.StageId
+             && _stages.FirstOrDefault(s => s.Id == _selectedStageId) is { } odoStage
+             && odoStage.Checklist.FirstOrDefault(f => f.EndsWith("_odometer")) is { } odometerKey)
+        {
+            @* Rideshare Mileage's Start/End capture (2026-11-20, rideshare plan Step 6e). Same
+               current-stage-only gating and hidden-InputFile-behind-a-label pattern as Scan
+               VIN/Scan Plate above. prefix is a checklist convention ({prefix}_odometer,
+               {prefix}_time), not a Shift-specific hardcode, so this block works for any future
+               workflow that adopts the same key shape. start_address/end_address are plain
+               checklist fields with no UI here at all -- set via chat like every other plain
+               field in this app (2026-11-20 user decision: no new generic text-input widget). *@
+            var prefix = odometerKey[..^"_odometer".Length];
+            var hasPlatformField = odoStage.Checklist.Contains("platform");
+            if (hasPlatformField) { EnsurePlatformPrefill(_selectedItem); }
+            var currentOdometerReading = ReadNumeric(_selectedItem.Data[odometerKey]);
+            <div style="margin-bottom:12px;">
+                <label for="@($"{prefix}-odometer-photo-input")" class="fluent-button-like" style="display:inline-block; cursor:pointer;">
+                    <FluentButton Appearance="ButtonAppearance.Primary" Disabled="_scanningOdometer">
+                        @(_scanningOdometer ? "Scanning..." : "Scan odometer")
+                    </FluentButton>
+                </label>
+                <InputFile id="@($"{prefix}-odometer-photo-input")" OnChange="e => OnOdometerPhotoSelected(e, prefix)" accept="image/*" style="display:none;" />
+                <span style="margin-left:8px; opacity:0.75;">or type reading:</span>
+                <input type="number" step="0.1" min="0" @bind="_odometerTypedInput" style="width:90px; margin-left:4px;" />
+                <FluentButton @onclick="() => SaveTypedOdometer(prefix)">Save</FluentButton>
+
+                @if (hasPlatformField)
+                {
+                    <div style="margin-top:8px;">
+                        <label style="opacity:0.75; margin-right:6px;">Platform:</label>
+                        <input type="text" @bind="_platformInput" style="width:140px;" />
+                        <FluentButton @onclick="SavePlatformAsync">Save</FluentButton>
+                    </div>
+                }
+
+                <p style="opacity:0.6; font-size:0.9em; margin-top:8px; margin-bottom:2px;">
+                    Ignition on so the odometer is lit; photograph the ODO number, not a trip meter.
+                </p>
+                <p style="opacity:0.6; font-size:0.9em; margin-bottom:2px;">
+                    For taxes, also download your Uber/Lyft trip history and annual tax summary and
+                    keep them with this log -- two consistent records are stronger evidence than
+                    one. If you start this shift before going online, this log also covers miles
+                    the platform summary doesn't count at all.
+                </p>
+
+                @if (currentOdometerReading is not null)
+                {
+                    <div style="margin-top:8px;">
+                        Odometer @currentOdometerReading.Value.ToString("N1", System.Globalization.CultureInfo.InvariantCulture) &mdash;
+                        Correct reading: <input type="number" step="0.1" min="0" @bind="_odometerCorrectInput" style="width:90px;" />
+                        <FluentButton @onclick="() => FixOdometerAsync(prefix)">Fix</FluentButton>
+                    </div>
+                }
+
+                @if (_odometerWarning is not null)
+                {
+                    <p style="opacity:0.75; color:var(--colorPaletteYellowForeground1, #a60);">@_odometerWarning</p>
+                }
+                @if (_odometerScanError is not null)
+                {
+                    <p style="opacity:0.75; color:var(--colorPaletteRedForeground1, #c00);">@_odometerScanError</p>
                 }
             </div>
         }
@@ -552,6 +618,15 @@ else
         value switch
         {
             null => "null",
+            // A bare "2025-12-31" (e.g. Rideshare Expenses' date field, 2026-11-20) is a calendar
+            // date, not an instant -- without this arm it fell through to the DateTime branch
+            // below and showed as "December 31, 2025, 12:00 AM", a fabricated midnight. Checked
+            // before the general date-ish arm since it's a stricter, exact-format match.
+            JsonValue v when v.GetValueKind() == System.Text.Json.JsonValueKind.String &&
+                LooksLikeDateField(key) &&
+                DateOnly.TryParseExact(v.GetValue<string>(), "yyyy-MM-dd",
+                    System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var d)
+                => d.ToString("MMMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture),
             JsonValue v when v.GetValueKind() == System.Text.Json.JsonValueKind.String &&
                 LooksLikeDateField(key) &&
                 DateTime.TryParse(v.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture,
@@ -591,12 +666,22 @@ else
     // closed jobs would otherwise just pile up alongside open ones forever (2026-11-11). Search
     // results are left untouched since searching for a specific job is an explicit intent that
     // shouldn't be second-guessed by this filter.
+    //
+    // "Closed" means more than just terminal (2026-11-20, rideshare plan Step 6b): a shift sitting
+    // in its terminal End stage before End's own capture is still unfinished work and must stay
+    // visible, while a terminal stage with no required fields (e.g. Nutrition's dinner) is closed
+    // the moment an item lands there, same as before. So an item is closed only once it's in a
+    // terminal, non-initial stage AND that stage's own required fields (checklist minus
+    // optional_checklist) are all filled -- not just "in a terminal stage" alone.
     private bool _showClosed;
 
+    private bool IsClosed(ItemSummary i) =>
+        _stages!.FirstOrDefault(s => s.Id == i.StageId) is { IsTerminal: true, IsInitial: false } st
+        && st.Checklist.Except(st.OptionalChecklist)
+             .All(f => i.Data.TryGetPropertyValue(f, out var v) && v is not null);
+
     private IEnumerable<ItemSummary> VisibleItems() =>
-        _showClosed
-            ? _items!
-            : _items!.Where(i => _stages!.FirstOrDefault(s => s.Id == i.StageId)?.IsTerminal != true);
+        _showClosed ? _items! : _items!.Where(i => !IsClosed(i));
 
     private string ItemTitle(ItemSummary item)
     {
@@ -626,11 +711,26 @@ else
     // looking at Breakfast's own checklist (2026-11-13 user report: "when I click on the
     // breakfast stage, it goes to lunch" -- the checklist shown was correct, only the heading
     // was wrong).
+    // Disambiguates same-day items in the non-job branch below (2026-11-20, rideshare plan Step
+    // 6c) -- Rideshare Expenses can log several items a day, which previously all read identically
+    // (e.g. "Logged 2026-11-19"). Grouping is by the item's own CURRENT stage (not the stageId
+    // override param below), so a name stays stable across the list, the overview and the stage
+    // headers, which may legitimately preview a different stage's checklist for the same item
+    // (see the comment on ItemDisplayName's stageId param). O(n^2) per render at hundreds of
+    // items is negligible, and avoids keeping a cache in sync across the six _items reassignments.
+    private bool HasSameDaySibling(ItemSummary item)
+    {
+        var day = item.CreatedAt.ToLocalTime().Date;
+        return _items is not null && _items.Any(o => o.Id != item.Id && o.StageId == item.StageId
+                                                  && o.CreatedAt.ToLocalTime().Date == day);
+    }
+
     private string ItemDisplayName(ItemSummary item, string? stageId = null) =>
         string.Equals(_workflow?.ItemLabel, "job", StringComparison.OrdinalIgnoreCase)
             ? $"Job #{JobNumber(item)}"
             // .ToLocalTime() (2026-11-15): matches the report's local-day bucketing.
-            : $"{StageTitle(stageId ?? item.StageId)} {item.CreatedAt.ToLocalTime():yyyy-MM-dd}";
+            : $"{StageTitle(stageId ?? item.StageId)} {item.CreatedAt.ToLocalTime():yyyy-MM-dd}"
+              + (HasSameDaySibling(item) ? $" {item.CreatedAt.ToLocalTime():HH:mm}" : "");
 
     // No field names can be assumed in general (data is domain-agnostic jsonb), but a field
     // literally named "title" is a real convention the agent itself already uses when it creates
@@ -690,21 +790,33 @@ else
     // into something readable for display.
     private static string ChecklistLabel(string field) => Capitalize(field.Replace('_', ' '));
 
-    // Splits a trailing unit suffix (just "_g" and "_lbs" today -- the only units any checklist
-    // field actually uses) off the field's label, so a filled-in value can be shown as "43g
-    // Protein" instead of the field needing its unit spelled out a second time in the label
-    // itself (2026-11-13). Anything else falls back to the plain label with no unit.
-    private static readonly (string Suffix, string Unit)[] FieldUnitSuffixes = [("_g", "g"), ("_lbs", "lbs")];
+    // Splits a trailing unit suffix off the field's label, so a filled-in value can be shown as
+    // "43g Protein" instead of the field needing its unit spelled out a second time in the label
+    // itself (2026-11-13). "_usd" added 2026-11-20 (Rideshare Expenses/Mileage) -- unlike _g/_lbs,
+    // a dollar sign reads naturally BEFORE the number ("$12.50 Tolls", not "12.50$ Tolls"), hence
+    // the Prefix flag threaded through below. Anything else falls back to the plain label with no
+    // unit.
+    private static readonly (string Suffix, string Unit, bool Prefix)[] FieldUnitSuffixes =
+        [("_g", "g", false), ("_lbs", "lbs", false), ("_usd", "$", true)];
 
-    private static (string Label, string Unit) FieldLabelAndUnit(string field)
+    private static (string Label, string Unit, bool UnitPrefix) FieldLabelAndUnit(string field)
     {
-        foreach (var (suffix, unit) in FieldUnitSuffixes)
+        foreach (var (suffix, unit, prefix) in FieldUnitSuffixes)
         {
             if (field.EndsWith(suffix, StringComparison.Ordinal))
-                return (Capitalize(field[..^suffix.Length].Replace('_', ' ')), unit);
+                return (Capitalize(field[..^suffix.Length].Replace('_', ' ')), unit, prefix);
         }
-        return (ChecklistLabel(field), "");
+        return (ChecklistLabel(field), "", false);
     }
+
+    // _usd values are stored as plain numbers (e.g. 12.5) but should always read like money
+    // ($12.50), not like a bare count -- unlike _g's "43" needing no extra formatting. Falls
+    // through to FieldText for anything the agent wrote as a non-numeric string (e.g. "12.5"),
+    // which still displays, just without the forced two decimals -- same tolerance _g already has.
+    private static string UnitValueText(string field, JsonNode? v, string unit) =>
+        unit == "$" && v is JsonValue jv && jv.TryGetValue<double>(out var d)
+            ? d.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+            : FieldText(field, v);
 
     // A trailing "*" marks which checklist fields actually gate the Done-shortcut button (see
     // DoneNextStage) -- everything on a stage's checklist is shown either way, this just tells
@@ -956,6 +1068,206 @@ else
         }
     }
 
+    // Rideshare Mileage's Start/End odometer capture (2026-11-20, rideshare plan Step 6e).
+    private bool _scanningOdometer;
+    private string? _odometerScanError;
+    private string? _odometerWarning;
+    private double? _odometerTypedInput;
+    private double? _odometerCorrectInput;
+    private string _platformInput = "";
+    private string? _platformPrefilledForItemId;
+    // Set only when the "more than 1,000 miles since Start" block has already been shown once
+    // for this exact reading -- re-saving the SAME value is the typed path's one-tap override
+    // (plan §4); a different reading (or a fresh item) must trip the block again.
+    private double? _odometerOverrideCandidate;
+    // Set when the photo is selected or typed Save is tapped (plan step 1), not when the write
+    // actually happens -- a scan round-trip shouldn't make the recorded time drift from when the
+    // driver actually took the reading.
+    private DateTimeOffset? _captureStartedAt;
+
+    // Mirrors private.jsonb_numeric: accepts a JSON number, or a string after stripping
+    // whitespace/$/commas -- the agent may have written either (2026-11-20).
+    private static double? ReadNumeric(JsonNode? v)
+    {
+        if (v is not JsonValue jv) return null;
+        if (jv.TryGetValue<double>(out var d)) return d;
+        if (jv.TryGetValue<string>(out var s))
+        {
+            s = s.Trim().Replace("$", "").Replace(",", "");
+            if (double.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+                return parsed;
+        }
+        return null;
+    }
+
+    // "the one with the greatest parsed end_time, falling back to CreatedAt" (plan step 3ii).
+    private static DateTimeOffset ParseEndTimeOrCreatedAt(ItemSummary o) =>
+        o.Data["end_time"] is JsonValue jv && jv.TryGetValue<string>(out var s)
+            && DateTimeOffset.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt)
+            ? dt
+            : o.CreatedAt;
+
+    // Pre-fills Platform from the most recent OTHER item that has one, only once per item (plan
+    // step "Platform pre-fill") -- re-running on every render would stomp on whatever the driver
+    // is actively typing into the box.
+    private void EnsurePlatformPrefill(ItemSummary item)
+    {
+        if (_platformPrefilledForItemId == item.Id) return;
+        _platformPrefilledForItemId = item.Id;
+        if (item.Data.TryGetPropertyValue("platform", out var existing) && existing is not null)
+        {
+            _platformInput = "";
+            return;
+        }
+        string? PlatformOf(ItemSummary o) =>
+            o.Data.TryGetPropertyValue("platform", out var pv) && pv is JsonValue pjv && pjv.TryGetValue<string>(out var ps) ? ps : null;
+        _platformInput = _items?.Where(o => o.Id != item.Id).OrderByDescending(o => o.CreatedAt)
+            .Select(PlatformOf).FirstOrDefault(p => p is not null) ?? "";
+    }
+
+    private async Task SavePlatformAsync()
+    {
+        if (_selectedItem is null || string.IsNullOrWhiteSpace(_platformInput)) return;
+        await Api.UpdateDataAsync(_selectedItem.Id, new JsonObject { ["platform"] = _platformInput.Trim() });
+        _items = await Api.GetItemsAsync(WorkflowId);
+        _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
+    }
+
+    // Resizes client-side, same as OnVinPhotoSelected/OnFoodPhotoSelected -- the photo itself is
+    // never persisted anywhere, read once here and discarded.
+    private async Task OnOdometerPhotoSelected(InputFileChangeEventArgs e, string prefix)
+    {
+        if (_scanningOdometer || _selectedItem is null) return;
+        _scanningOdometer = true;
+        _odometerScanError = null;
+        _captureStartedAt = DateTimeOffset.UtcNow;
+        try
+        {
+            var resized = await e.File.RequestImageFileAsync("image/jpeg", 1600, 1600);
+            using var stream = resized.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var base64 = Convert.ToBase64String(ms.ToArray());
+
+            var result = await Api.ScanOdometerAsync(base64, "image/jpeg");
+            if (result is null)
+            {
+                _odometerScanError = "Couldn't read the odometer -- try again, or type the reading.";
+                return;
+            }
+            if (result.Unit == "km")
+            {
+                _odometerScanError = "Odometer appears to be in km -- switch the display to miles or type the reading in miles.";
+                return;
+            }
+            await CaptureOdometerAsync(prefix, result.Reading, "scanned", string.IsNullOrEmpty(result.Note) ? null : result.Note);
+        }
+        catch (Exception ex)
+        {
+            _odometerScanError = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            _scanningOdometer = false;
+        }
+    }
+
+    private async Task SaveTypedOdometer(string prefix)
+    {
+        if (_selectedItem is null || _odometerTypedInput is not { } reading)
+        {
+            _odometerScanError = "Enter a number.";
+            return;
+        }
+        _captureStartedAt = DateTimeOffset.UtcNow;
+        _odometerScanError = null;
+        await CaptureOdometerAsync(prefix, reading, "typed", null);
+    }
+
+    // Shared write path for both the scan and typed-Save buttons (plan step "CaptureAsync flow").
+    private async Task CaptureOdometerAsync(string prefix, double reading, string source, string? modelNote)
+    {
+        if (_selectedItem is null) return;
+        _odometerScanError = null;
+        _odometerWarning = null;
+
+        if (prefix == "end")
+        {
+            var start = ReadNumeric(_selectedItem.Data["start_odometer"]);
+            if (start is not null)
+            {
+                if (reading < start)
+                {
+                    _odometerScanError = $"End reading ({reading:N1}) is below the start reading ({start:N1}) -- that can't be right. Check the number and try again.";
+                    _odometerTypedInput = reading;
+                    return;
+                }
+                if (reading - start.Value > 1000 && _odometerOverrideCandidate != reading)
+                {
+                    _odometerOverrideCandidate = reading;
+                    _odometerScanError = $"That's {reading - start.Value:N0} miles since Start ({start:N1}) -- more than a typical shift. Save again with the same reading to confirm it's correct.";
+                    _odometerTypedInput = reading;
+                    return;
+                }
+            }
+        }
+        else if (prefix == "start")
+        {
+            var previousEnd = _items?
+                .Where(o => o.Id != _selectedItem.Id)
+                .Select(o => (End: ReadNumeric(o.Data["end_odometer"]), Order: ParseEndTimeOrCreatedAt(o)))
+                .Where(x => x.End is not null)
+                .OrderByDescending(x => x.Order)
+                .Select(x => x.End)
+                .FirstOrDefault();
+            if (previousEnd is double prevEnd && reading < prevEnd)
+            {
+                _odometerWarning = $"This start reading ({reading:N1}) is below the previous shift's end reading ({prevEnd:N1}). Saved anyway -- double-check the number.";
+            }
+        }
+        _odometerOverrideCandidate = null;
+
+        var patch = new JsonObject { [$"{prefix}_odometer"] = reading };
+        var timeKey = $"{prefix}_time";
+        var stage = _stages!.FirstOrDefault(s => s.Id == _selectedStageId);
+        if (stage is not null && stage.Checklist.Contains(timeKey)
+            && !(_selectedItem.Data.TryGetPropertyValue(timeKey, out var existingTime) && existingTime is not null))
+        {
+            patch[timeKey] = (_captureStartedAt ?? DateTimeOffset.UtcNow)
+                .ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        }
+        if (stage is not null && stage.Checklist.Contains("platform")
+            && !(_selectedItem.Data.TryGetPropertyValue("platform", out var existingPlatform) && existingPlatform is not null)
+            && !string.IsNullOrWhiteSpace(_platformInput))
+        {
+            patch["platform"] = _platformInput.Trim();
+        }
+
+        await Api.UpdateDataAsync(_selectedItem.Id, patch);
+        var noteText = $"{char.ToUpperInvariant(prefix[0])}{prefix[1..]} odometer {reading.ToString("N1", System.Globalization.CultureInfo.InvariantCulture)} mi ({source})"
+            + (string.IsNullOrEmpty(modelNote) ? "" : $" -- {modelNote}");
+        await Api.AddNoteAsync(_selectedItem.Id, noteText, _selectedStageId);
+
+        _odometerTypedInput = null;
+        _items = await Api.GetItemsAsync(WorkflowId);
+        _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
+        if (_selectedItem is not null) await LoadNotes(_selectedItem.Id);
+    }
+
+    private async Task FixOdometerAsync(string prefix)
+    {
+        if (_selectedItem is null || _odometerCorrectInput is not { } newReading) return;
+        var old = ReadNumeric(_selectedItem.Data[$"{prefix}_odometer"]);
+        await Api.UpdateDataAsync(_selectedItem.Id, new JsonObject { [$"{prefix}_odometer"] = newReading });
+        await Api.AddNoteAsync(_selectedItem.Id,
+            $"Corrected {prefix} odometer {(old is null ? "?" : old.Value.ToString("N1", System.Globalization.CultureInfo.InvariantCulture))} -> {newReading.ToString("N1", System.Globalization.CultureInfo.InvariantCulture)}",
+            _selectedStageId);
+        _odometerCorrectInput = null;
+        _items = await Api.GetItemsAsync(WorkflowId);
+        _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
+        if (_selectedItem is not null) await LoadNotes(_selectedItem.Id);
+    }
+
     private void BackToItem() => _selectedStageId = null;
 
     private void BackToList()
@@ -1060,7 +1372,11 @@ else
                 selectedStageTitle: _selectedStageId is not null ? StageTitle(_selectedStageId) : null,
                 selectedStageId: _selectedStageId,
                 selectedItemDisplayName: _selectedItem is null ? null : ItemDisplayName(_selectedItem),
-                selectedStageMessageCount: stageMessageCount);
+                selectedStageMessageCount: stageMessageCount,
+                // The browser's local date -- the same notion of "today" the report page uses --
+                // so the agent can resolve relative dates ("yesterday") when logging, e.g. a
+                // Rideshare Expenses entry (2026-11-20).
+                clientLocalDate: DateTime.Now.ToString("yyyy-MM-dd (dddd)", System.Globalization.CultureInfo.InvariantCulture));
             _messagesByJob[messagesKey] = messages;
             _chatLog.Add(("Agent", reply, itemId, stageId));
             await Api.AddChatMessageAsync(WorkflowId, StoredWho("Agent"), reply, itemId, stageId);
