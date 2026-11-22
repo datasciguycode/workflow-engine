@@ -416,20 +416,22 @@ else
            width:100% box implies (2026-11-08, after the fluent-text-area selector-typo fix still
            didn't close the gap), so this gives up on lining edges up at all rather than chasing it
            further. *@
-        @* Renamed from "Save as note" to "CC AI" and the default flipped to checked (2026-11-22):
-           the old unchecked-by-default box meant a plain statement like a rideshare expense never
-           reached the agent, so its fields never got parsed -- unchecking this is now the
-           deliberate opt-out for text that really should bypass the model entirely. *@
+        @* "Send to AI" (default checked) and "Save as note" (default unchecked) are independent
+           now (2026-11-22) -- a single checkbox couldn't express "parse the fields AND keep the
+           raw text as a durable note," which is a real combination (e.g. a rideshare expense
+           logged by voice). Both unchecked disables Send outright rather than letting a message
+           go nowhere silently. *@
         @if (_selectedItem is not null)
         {
-            <FluentCheckbox @bind-Value="_ccAi">Send to AI</FluentCheckbox>
+            <FluentCheckbox @bind-Value="_sendToAi">Send to AI</FluentCheckbox>
+            <FluentCheckbox @bind-Value="_saveAsNote">Save as note</FluentCheckbox>
         }
         @* Rows alone (2 -> 3) didn't produce a visible height change -- the fluent-textarea web
            component doesn't appear to size off its rows attribute reliably, so force the height
            directly via CSS instead (2026-11-08). *@
         <FluentTextArea id="chat-input" @bind-Value="_draft" Rows="3" Style="width:100%; min-height:6rem;" />
         <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; margin-bottom:12px;">
-            <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@_sending" @onclick="Send">
+            <FluentButton Appearance="ButtonAppearance.Primary" Disabled="@(_sending || (!_sendToAi && !_saveAsNote))" @onclick="Send">
                 @(_sending ? "Sending..." : "Send")
             </FluentButton>
             @if (_selectedStageId is not null && DoneNextStage() is { } nextStage)
@@ -551,7 +553,8 @@ else
     private string ItemLabelPlural => ItemLabelSingular + "s";
     private string _draft = "";
     private bool _sending;
-    private bool _ccAi = true;
+    private bool _sendToAi = true;
+    private bool _saveAsNote;
 
     // One Claude-facing conversation per job (keyed by item id; "__general__" covers the Jobs
     // list / New Job screen, where no item is selected yet) instead of one array for the whole
@@ -789,11 +792,6 @@ else
     private static string Capitalize(string s) =>
         string.IsNullOrEmpty(s) ? s : char.ToUpperInvariant(s[0]) + s[1..];
 
-    // Checklist entries are data-field keys (snake_case, e.g. "scheduled_at"), chosen to match
-    // exactly so "is this done" can just check item.Data for that key -- this turns the key back
-    // into something readable for display.
-    private static string ChecklistLabel(string field) => Capitalize(field.Replace('_', ' '));
-
     // Splits a trailing unit suffix off the field's label, so a filled-in value can be shown as
     // "43g Protein" instead of the field needing its unit spelled out a second time in the label
     // itself (2026-11-13). "_usd" added 2026-11-20 (Rideshare Expenses/Mileage) -- unlike _g/_lbs,
@@ -803,12 +801,28 @@ else
     private static readonly (string Suffix, string Unit, bool Prefix)[] FieldUnitSuffixes =
         [("_g", "g", false), ("_lbs", "lbs", false), ("_usd", "$", true)];
 
+    // Checklist entries are data-field keys (snake_case, e.g. "scheduled_at"), chosen to match
+    // exactly so "is this done" can just check item.Data for that key -- this turns the key back
+    // into something readable for display. Strips a known unit suffix first (2026-11-22) -- a
+    // checklist item for "phone_usd" read as "Phone usd" otherwise, the suffix showing up as a
+    // literal word instead of being treated as a unit like it already is everywhere a value is
+    // actually rendered.
+    private static string ChecklistLabel(string field)
+    {
+        foreach (var (suffix, _, _) in FieldUnitSuffixes)
+        {
+            if (field.EndsWith(suffix, StringComparison.Ordinal))
+                return Capitalize(field[..^suffix.Length].Replace('_', ' '));
+        }
+        return Capitalize(field.Replace('_', ' '));
+    }
+
     private static (string Label, string Unit, bool UnitPrefix) FieldLabelAndUnit(string field)
     {
         foreach (var (suffix, unit, prefix) in FieldUnitSuffixes)
         {
             if (field.EndsWith(suffix, StringComparison.Ordinal))
-                return (Capitalize(field[..^suffix.Length].Replace('_', ' ')), unit, prefix);
+                return (ChecklistLabel(field), unit, prefix);
         }
         return (ChecklistLabel(field), "", false);
     }
@@ -1315,22 +1329,21 @@ else
         var previousItemCount = _items!.Count;
         _sending = true;
 
-        // Unchecking "CC AI" bypasses the agent entirely -- no AI round trip, so there's no
-        // more guessing whether a given message became a note vs. stayed as plain chat;
-        // unchecking the box makes that decision explicit instead of leaving it to the model's
-        // judgment calls (content-based or the 5-message nudge below). Reset to checked after
-        // every send so the next message defaults back to reaching the agent -- staying
-        // unchecked would otherwise silently turn a later real instruction into a note instead
-        // of acting on it (2026-11-08; checkbox renamed and default flipped 2026-11-22 so a
-        // plain statement reaches the agent, and thus gets its fields parsed, by default).
-        if (!_ccAi && itemId is not null)
+        // "Send to AI" and "Save as note" are independent (2026-11-22) -- a message can do
+        // either, or both (parse the fields AND keep the raw text as a durable note), or
+        // neither (the Send button is disabled in that case, so this never fires with both
+        // false). Reset both to their defaults after every send so the next message starts
+        // from "reaches the agent, isn't also saved as a note" rather than silently inheriting
+        // this message's one-off choice (2026-11-08, revised 2026-11-22).
+        var sendToAi = _sendToAi;
+        var saveAsNote = _saveAsNote;
+        _sendToAi = true;
+        _saveAsNote = false;
+
+        if (saveAsNote && itemId is not null)
         {
-            _ccAi = true;
             try
             {
-                // Neither shown in the chat log nor persisted to chat_messages -- when saving
-                // as a note, the note itself (visible in the Notes section) is the record, so
-                // the chat has nothing to add (2026-11-08).
                 await Api.AddNoteAsync(itemId, text, stageId);
                 _notes = await Api.GetNotesAsync(itemId);
             }
@@ -1339,10 +1352,11 @@ else
                 _chatLog.Add(("Error", ex.Message, itemId, stageId));
                 await Api.AddChatMessageAsync(WorkflowId, StoredWho("Error"), ex.Message, itemId, stageId);
             }
-            finally
-            {
-                _sending = false;
-            }
+        }
+
+        if (!sendToAi)
+        {
+            _sending = false;
             return;
         }
 
