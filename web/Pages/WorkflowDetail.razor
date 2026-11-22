@@ -423,8 +423,10 @@ else
            go nowhere silently. *@
         @if (_selectedItem is not null)
         {
-            <FluentCheckbox @bind-Value="_sendToAi">Send to AI</FluentCheckbox>
-            <FluentCheckbox @bind-Value="_saveAsNote">Save as note</FluentCheckbox>
+            <div style="display:flex; gap:24px; flex-wrap:wrap;">
+                <FluentCheckbox @bind-Value="_sendToAi">Send to AI</FluentCheckbox>
+                <FluentCheckbox @bind-Value="_saveAsNote">Save as note</FluentCheckbox>
+            </div>
         }
         @* Rows alone (2 -> 3) didn't produce a visible height change -- the fluent-textarea web
            component doesn't appear to size off its rows attribute reliably, so force the height
