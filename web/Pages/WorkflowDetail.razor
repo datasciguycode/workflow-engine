@@ -399,7 +399,7 @@ else
 
     @* The job overview page gets its own chat box again (2026-11-08) -- reversing 2026-11-04's
        removal, now that notes can be tagged job-level (no stage) vs. stage-level: the overview
-       page is where a job-level note belongs, so it needs a "Save as note" checkbox and a Send
+       page is where a job-level note belongs, so it needs a "CC AI" checkbox and a Send
        button of its own, not just the stage views.
        Still no chat box on the bare Jobs list -- it only appears once "+ New Job" is clicked
        (create-only there) or once a job (overview or a specific stage) is open. See the header
@@ -416,9 +416,13 @@ else
            width:100% box implies (2026-11-08, after the fluent-text-area selector-typo fix still
            didn't close the gap), so this gives up on lining edges up at all rather than chasing it
            further. *@
+        @* Renamed from "Save as note" to "CC AI" and the default flipped to checked (2026-11-22):
+           the old unchecked-by-default box meant a plain statement like a rideshare expense never
+           reached the agent, so its fields never got parsed -- unchecking this is now the
+           deliberate opt-out for text that really should bypass the model entirely. *@
         @if (_selectedItem is not null)
         {
-            <FluentCheckbox @bind-Value="_saveAsNote">Save as note</FluentCheckbox>
+            <FluentCheckbox @bind-Value="_ccAi">Send to AI</FluentCheckbox>
         }
         @* Rows alone (2 -> 3) didn't produce a visible height change -- the fluent-textarea web
            component doesn't appear to size off its rows attribute reliably, so force the height
@@ -547,7 +551,7 @@ else
     private string ItemLabelPlural => ItemLabelSingular + "s";
     private string _draft = "";
     private bool _sending;
-    private bool _saveAsNote;
+    private bool _ccAi = true;
 
     // One Claude-facing conversation per job (keyed by item id; "__general__" covers the Jobs
     // list / New Job screen, where no item is selected yet) instead of one array for the whole
@@ -1311,15 +1315,17 @@ else
         var previousItemCount = _items!.Count;
         _sending = true;
 
-        // "Save as note" bypasses the agent entirely -- no AI round trip, so there's no more
-        // guessing whether a given message became a note vs. stayed as plain chat; checking the
-        // box makes that decision explicit instead of leaving it to the model's judgment calls
-        // (content-based or the 5-message nudge below). Reset after every send so it has to be
-        // deliberately re-checked for the next message, rather than silently staying on and
-        // turning a later real instruction into a note instead of acting on it (2026-11-08).
-        if (_saveAsNote && itemId is not null)
+        // Unchecking "CC AI" bypasses the agent entirely -- no AI round trip, so there's no
+        // more guessing whether a given message became a note vs. stayed as plain chat;
+        // unchecking the box makes that decision explicit instead of leaving it to the model's
+        // judgment calls (content-based or the 5-message nudge below). Reset to checked after
+        // every send so the next message defaults back to reaching the agent -- staying
+        // unchecked would otherwise silently turn a later real instruction into a note instead
+        // of acting on it (2026-11-08; checkbox renamed and default flipped 2026-11-22 so a
+        // plain statement reaches the agent, and thus gets its fields parsed, by default).
+        if (!_ccAi && itemId is not null)
         {
-            _saveAsNote = false;
+            _ccAi = true;
             try
             {
                 // Neither shown in the chat log nor persisted to chat_messages -- when saving
