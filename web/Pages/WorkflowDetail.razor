@@ -803,6 +803,14 @@ else
     private static readonly (string Suffix, string Unit, bool Prefix)[] FieldUnitSuffixes =
         [("_g", "g", false), ("_lbs", "lbs", false), ("_usd", "$", true)];
 
+    // A field whose generic (key-derived) label would otherwise mislead -- "phone_usd" needs to
+    // read as a once-a-month entry, not something logged on every shift/expense like gas or
+    // supplies, since its period total is just a sum of whatever amounts get entered (2026-11-22).
+    private static readonly Dictionary<string, string> ChecklistLabelOverrides = new()
+    {
+        ["phone_usd"] = "Phone (monthly)",
+    };
+
     // Checklist entries are data-field keys (snake_case, e.g. "scheduled_at"), chosen to match
     // exactly so "is this done" can just check item.Data for that key -- this turns the key back
     // into something readable for display. Strips a known unit suffix first (2026-11-22) -- a
@@ -811,6 +819,8 @@ else
     // actually rendered.
     private static string ChecklistLabel(string field)
     {
+        if (ChecklistLabelOverrides.TryGetValue(field, out var overrideLabel)) return overrideLabel;
+
         foreach (var (suffix, _, _) in FieldUnitSuffixes)
         {
             if (field.EndsWith(suffix, StringComparison.Ordinal))
@@ -1015,7 +1025,13 @@ else
             await stream.CopyToAsync(ms);
             var base64 = Convert.ToBase64String(ms.ToArray());
 
-            var result = await Api.ScanFoodPhotoAsync(base64, "image/jpeg");
+            // Passed through so the model knows the app already asks "how much did you eat" --
+            // without it, a photo it can't itself judge consumption from (an unopened,
+            // multi-serving container/nutrition label) made it decline to estimate at all rather
+            // than estimate the full container and trust this existing box to scale it down
+            // (2026-11-23).
+            var portionForScan = _plateScanPortion is > 0 and <= 1 ? _plateScanPortion : 1;
+            var result = await Api.ScanFoodPhotoAsync(base64, "image/jpeg", portionForScan);
             if (result is null)
             {
                 _plateScanError = "Couldn't get a reliable estimate from that photo -- try again with better lighting, or just tell the chat what you ate.";
@@ -1033,7 +1049,7 @@ else
                     ? existing
                     : 0) + add;
 
-            var portion = _plateScanPortion is > 0 and <= 1 ? _plateScanPortion : 1;
+            var portion = portionForScan;
             var scanned = result.Items.Select(i => (
                 i.Food,
                 Protein: i.ProteinG * portion,

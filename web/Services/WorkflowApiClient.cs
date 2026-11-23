@@ -359,13 +359,14 @@ public class WorkflowApiClient
     // 422 means scan-plate's own validation judged the estimate unreliable (not a request
     // failure) -- returns null for that case so the caller can show a "try again" message, same
     // as ScanVinAsync returning a null vin, rather than throwing for an expected outcome.
-    public async Task<FoodScanResult?> ScanFoodPhotoAsync(string imageBase64, string mediaType)
+    public async Task<FoodScanResult?> ScanFoodPhotoAsync(string imageBase64, string mediaType, double portion)
     {
         var req = await NewRequestAsync(HttpMethod.Post, "/functions/v1/scan-plate");
         req.Content = JsonContent.Create(new JsonObject
         {
             ["image_base64"] = imageBase64,
             ["media_type"] = mediaType,
+            ["portion"] = portion,
         });
         var res = await _http.SendAsync(req);
         var text = await res.Content.ReadAsStringAsync();

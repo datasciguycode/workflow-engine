@@ -18,6 +18,12 @@ const MODEL = "claude-sonnet-5-5";
 type RequestBody = {
   image_base64: string;
   media_type: string;
+  // The "Portion of this photo you ate" box already on the client (2026-11-23) -- without this,
+  // the model has no way to know the app already captures "how much did you actually eat"
+  // separately, so a photo it can't itself judge the consumed amount for (e.g. an unopened,
+  // multi-serving container/nutrition label) made it decline to estimate at all rather than
+  // estimate the full visible quantity and let the client's own portion multiplier scale it down.
+  portion?: number;
 };
 
 type FoodItem = {
@@ -155,6 +161,12 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Clamp/default the same way the client already treats its own box (2026-11-23): outside
+  // (0, 1] means "unset," not "zero" -- a mis-sent 0 here must not read as "they ate none of it."
+  const portion = typeof body.portion === "number" && body.portion > 0 && body.portion <= 1
+    ? body.portion
+    : 1;
+
   try {
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
     const response = await anthropic.messages.create({
@@ -171,7 +183,16 @@ Deno.serve(async (req) => {
         '{"items": [{"food": "<short name>", "protein_g": <number>, "carbs_g": <number>, ' +
         '"fat_g": <number>, "fiber_g": <number>, "sugar_g": <number>}, ...], ' +
         '"uncertainty_note": "<short string>"}. ' +
-        "All five nutrient values per item are grams, for that item's own visible portion. " +
+        "All five nutrient values per item are grams, for the FULL visible quantity -- the " +
+        "entire plate/container as shown, not a guess at how much of it was actually eaten. " +
+        `The app separately asked the person what fraction they ate (${portion} here, where 1 ` +
+        "means all of it) and will multiply your numbers by that fraction itself, so never " +
+        "reduce your estimate, zero it out, or decline to answer because the consumed amount is " +
+        "uncertain -- that question is already handled outside this response. This matters most " +
+        "for an unopened or multi-serving product (a nutrition facts label on a carton, bag, or " +
+        "box rather than food already plated): read the per-serving values and the servings-per- " +
+        "container count off the label, multiply them together, and report that as the FULL " +
+        "container's total -- do not report just one serving, and do not report zero. " +
         "Within each item, fiber_g and sugar_g are both sub-components of carbs_g (same as a " +
         "nutrition label breaks out Total Carbohydrate into Dietary Fiber and Total Sugars), so " +
         "fiber_g + sugar_g must never exceed carbs_g for that item. Keep each food's name short " +
