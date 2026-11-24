@@ -1159,7 +1159,7 @@ else
                 $"  {i.Food} (~{i.Grams:0.#}g): {i.Calories:0.#} kcal / {i.Protein:0.#}g protein / " +
                 $"{i.Carbs:0.#}g carbs / {i.Fat:0.#}g fat / {i.Fiber:0.#}g fiber / {i.Sugar:0.#}g sugar");
             await Api.AddNoteAsync(_selectedItem.Id,
-                $"Scanned{portionNote}:\n{string.Join("\n\n", lines)}\n\n" +
+                $"Scanned{portionNote}:\n\n{string.Join("\n\n", lines)}\n\n" +
                 $"Total: ~{totals.Grams:0.#}g, {totals.Calories:0.#} kcal / {totals.Protein:0.#}g protein / " +
                 $"{totals.Carbs:0.#}g carbs / {totals.Fat:0.#}g fat / {totals.Fiber:0.#}g fiber / {totals.Sugar:0.#}g sugar.",
                 _selectedStageId);
