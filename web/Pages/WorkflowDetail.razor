@@ -73,11 +73,15 @@ else
                the item has already left or never reached (2026-11-13 user report: "whenever I go
                to a different stage, it has the same micronutrient grams on each page"). *@
             var onCurrentStage = selectedStage.Id == _selectedItem.StageId;
+            // A past stage has no live item.data of its own -- fall back to the snapshot taken
+            // when the item left it (2026-11-24), rather than always reading as unfilled.
+            var pastStageSnapshot = !onCurrentStage && _stageSnapshots.TryGetValue(selectedStage.Id, out var snap) ? snap : null;
             <FluentStack Orientation="Orientation.Vertical" VerticalGap="2" Style="margin-bottom:12px;">
                 @foreach (var field in selectedStage.Checklist)
                 {
-                    var hasRawValue = _selectedItem.Data.TryGetPropertyValue(field, out var v) && v is not null;
-                    var hasValue = onCurrentStage && hasRawValue;
+                    var source = onCurrentStage ? _selectedItem.Data : pastStageSnapshot;
+                    JsonNode? v = null;
+                    var hasValue = source is not null && source.TryGetPropertyValue(field, out v) && v is not null;
                     var (baseLabel, unit, unitPrefix) = FieldLabelAndUnit(field);
                     var star = selectedStage.OptionalChecklist.Contains(field) ? "" : " *";
                     <div style="opacity:0.75; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
@@ -783,6 +787,29 @@ else
     private async Task LoadNotes(string itemId)
     {
         _notes = await Api.GetNotesAsync(itemId);
+        await LoadStageSnapshots(itemId);
+    }
+
+    // What a PAST stage's checklist looked like right before the item moved on (2026-11-24 user
+    // request: "would like to see the values saved at the stage/meal become visible regardless of
+    // which stage is current" -- previously a past stage always rendered every field as unfilled,
+    // since item.data is one flat live blob that move_stage wipes on every transition). Every
+    // move_stage already records the wiped-out values as item.stage_changed's own "cleared"
+    // payload (see 20261115000000 migration) -- this just keys the latest one by the stage being
+    // LEFT (from_stage_id), so a stage visited more than once keeps only its most recent snapshot.
+    private Dictionary<string, JsonObject> _stageSnapshots = new();
+
+    private async Task LoadStageSnapshots(string itemId)
+    {
+        var snapshots = new Dictionary<string, JsonObject>();
+        var events = await Api.GetItemEventsAsync(itemId);
+        foreach (var e in events)
+        {
+            if (e.EventType != "item.stage_changed" || e.FromStageId is null) continue;
+            if (e.Data?["cleared"] is JsonObject cleared)
+                snapshots[e.FromStageId] = cleared;
+        }
+        _stageSnapshots = snapshots;
     }
 
     private string StageTitle(string? stageId) =>

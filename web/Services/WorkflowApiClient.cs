@@ -19,7 +19,7 @@ public record ItemSummary(string Id, string StageId, JsonObject Data, DateTimeOf
 // list's search results don't need the full unfiltered item list just to label "Job #N".
 public record ItemSearchResult(string Id, string StageId, JsonObject Data, DateTimeOffset CreatedAt, long JobNumber);
 public record ChatMessage(string Who, string Body, string? ItemId, string? StageId);
-public record ItemEventRow(string EventType, string? StageId, JsonObject? Data);
+public record ItemEventRow(string EventType, string? StageId, JsonObject? Data, string? FromStageId = null);
 // add_note's event data is a plain JSON string (to_jsonb(p_note)), not an object like
 // item.created/item.data_changed -- ItemEventRow.Data (typed JsonObject?) can't hold that
 // shape, so notes get their own fetch/record rather than forcing a cast that would silently
@@ -258,14 +258,15 @@ public class WorkflowApiClient
     public async Task<List<ItemEventRow>> GetItemEventsAsync(string itemId)
     {
         var req = await NewRequestAsync(HttpMethod.Get,
-            $"/rest/v1/item_events?item_id=eq.{itemId}&select=event_type,stage_id,data&order=created_at.asc");
+            $"/rest/v1/item_events?item_id=eq.{itemId}&select=event_type,stage_id,from_stage_id,data&order=created_at.asc");
         var res = await _http.SendAsync(req);
         res.EnsureSuccessStatusCode();
         var rows = await res.Content.ReadFromJsonAsync<List<JsonObject>>() ?? [];
         return rows.Select(r => new ItemEventRow(
             r["event_type"]!.GetValue<string>(),
             r["stage_id"]?.GetValue<string>(),
-            r["data"] as JsonObject
+            r["data"] as JsonObject,
+            r["from_stage_id"]?.GetValue<string>()
         )).ToList();
     }
 
