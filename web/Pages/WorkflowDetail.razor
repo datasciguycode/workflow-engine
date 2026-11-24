@@ -1424,6 +1424,14 @@ else
             _items = await Api.GetItemsAsync(WorkflowId);
             if (_selectedItem is not null)
                 _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
+            // The agent's own move_stage tool (triggered by this very message, e.g. "done with
+            // dinner") can advance the item's real stage mid-chat. Without this, the view stays
+            // on the stage it was drilled into before the move, which then reads as EVERY field
+            // on that now-past stage being unfilled (2026-11-24 user report: "data disappeared"
+            // after a Scan Plate write, scanned while viewing a stage the item had already left) --
+            // same stage-follow fix DoneMoveToNextStage already applies for the manual button.
+            if (_selectedItem is not null && _selectedStageId is not null && _selectedStageId != _selectedItem.StageId)
+                _selectedStageId = _selectedItem.StageId;
             if (_selectedItem is not null && _selectedStageId is not null)
                 await LoadNotes(_selectedItem.Id);
 
