@@ -103,6 +103,16 @@ else
                     </div>
                 }
             </FluentStack>
+            @if (onCurrentStage && selectedStage.Checklist.Any(f => _selectedItem.Data.TryGetPropertyValue(f, out var cv) && cv is not null))
+            {
+                @* Only on the item's actual current stage, same reasoning as the scan buttons below
+                   -- clearing writes straight into item.data via update_data, so clearing while
+                   previewing a past stage would wipe whatever the item's REAL current stage holds,
+                   not the (already-gone) data this preview is showing (2026-11-24 user request). *@
+                <FluentButton Appearance="ButtonAppearance.Outline" @onclick="() => ClearChecklistAsync(selectedStage)" Style="margin-bottom:12px;">
+                    Clear All
+                </FluentButton>
+            }
         }
         @if (_selectedStageId == _selectedItem.StageId && _stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("vin") == true)
         {
@@ -1037,6 +1047,27 @@ else
     // second line surfaced the same way _vinScanError is (2026-11-12).
     private string? _plateScanNote;
     private double _plateScanPortion = 1;
+
+    // Wipes every checklist field this stage has (not the whole item.data, which may hold keys
+    // from other reused field names) back to unfilled -- for when a scan/chat entry was wrong
+    // and re-logging from scratch is easier than correcting each field (2026-11-24 user request).
+    // Guarded by a native confirm() since there's no undo: update_data deletes the key outright,
+    // same as move_stage's own clearing, so this can't be recovered from item.data afterward
+    // (the Notes scan history is untouched, since it's a separate append-only log).
+    private async Task ClearChecklistAsync(StageSummary stage)
+    {
+        if (_selectedItem is null) return;
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Clear all logged values for {StageTitle(stage.Id)}?");
+        if (!confirmed) return;
+
+        var patch = new JsonObject();
+        foreach (var field in stage.Checklist)
+            patch[field] = null;
+
+        await Api.UpdateDataAsync(_selectedItem.Id, patch);
+        _items = await Api.GetItemsAsync(WorkflowId);
+        _selectedItem = _items.FirstOrDefault(i => i.Id == _selectedItem.Id);
+    }
 
     private async Task OnFoodPhotoSelected(InputFileChangeEventArgs e)
     {
