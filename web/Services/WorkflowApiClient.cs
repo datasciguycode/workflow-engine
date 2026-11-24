@@ -30,7 +30,7 @@ public record ItemNote(string Text, string? StageId, DateTimeOffset CreatedAt);
 // request failure (which still throws, same as ScanVinAsync) (2026-11-12).
 // Items is a per-food breakdown, not one combined total (2026-11-14) -- user wants to see what
 // each food on the plate contributed, not just the plate's lumped sum.
-public record FoodScanItem(string Food, double ProteinG, double CarbsG, double FatG, double FiberG, double SugarG);
+public record FoodScanItem(string Food, double ProteinG, double CarbsG, double FatG, double FiberG, double SugarG, double CaloriesKcal);
 public record FoodScanResult(IReadOnlyList<FoodScanItem> Items, string UncertaintyNote);
 // scan-odometer's result (2026-11-20) -- same null-on-422 contract as FoodScanResult.
 public record OdometerScanResult(double Reading, string Unit, string Note);
@@ -382,7 +382,8 @@ public class WorkflowApiClient
                 i["carbs_g"]!.GetValue<double>(),
                 i["fat_g"]!.GetValue<double>(),
                 i["fiber_g"]!.GetValue<double>(),
-                i["sugar_g"]!.GetValue<double>()))
+                i["sugar_g"]!.GetValue<double>(),
+                i["calories_kcal"]!.GetValue<double>()))
             .ToList();
         return new FoodScanResult(items, json["uncertainty_note"]!.GetValue<string>());
     }

@@ -798,10 +798,10 @@ else
     // "43g Protein" instead of the field needing its unit spelled out a second time in the label
     // itself (2026-11-13). "_usd" added 2026-11-20 (Rideshare Expenses/Mileage) -- unlike _g/_lbs,
     // a dollar sign reads naturally BEFORE the number ("$12.50 Tolls", not "12.50$ Tolls"), hence
-    // the Prefix flag threaded through below. Anything else falls back to the plain label with no
-    // unit.
+    // the Prefix flag threaded through below. "_kcal" added 2026-11-23 (Nutrition Tracker's
+    // weight_lbs -> calories_kcal swap). Anything else falls back to the plain label with no unit.
     private static readonly (string Suffix, string Unit, bool Prefix)[] FieldUnitSuffixes =
-        [("_g", "g", false), ("_lbs", "lbs", false), ("_usd", "$", true)];
+        [("_g", "g", false), ("_lbs", "lbs", false), ("_usd", "$", true), ("_kcal", "kcal", false)];
 
     // A field whose generic (key-derived) label would otherwise mislead -- "phone_usd" needs to
     // read as a once-a-month entry, not something logged on every shift/expense like gas or
@@ -1056,13 +1056,15 @@ else
                 Carbs: i.CarbsG * portion,
                 Fat: i.FatG * portion,
                 Fiber: i.FiberG * portion,
-                Sugar: i.SugarG * portion)).ToList();
+                Sugar: i.SugarG * portion,
+                Calories: i.CaloriesKcal * portion)).ToList();
             var totals = (
                 Protein: scanned.Sum(i => i.Protein),
                 Carbs: scanned.Sum(i => i.Carbs),
                 Fat: scanned.Sum(i => i.Fat),
                 Fiber: scanned.Sum(i => i.Fiber),
-                Sugar: scanned.Sum(i => i.Sugar));
+                Sugar: scanned.Sum(i => i.Sugar),
+                Calories: scanned.Sum(i => i.Calories));
             await Api.UpdateDataAsync(_selectedItem.Id, new JsonObject
             {
                 ["protein_g"] = ExistingPlus("protein_g", totals.Protein),
@@ -1070,6 +1072,7 @@ else
                 ["fat_g"] = ExistingPlus("fat_g", totals.Fat),
                 ["fiber_g"] = ExistingPlus("fiber_g", totals.Fiber),
                 ["sugar_g"] = ExistingPlus("sugar_g", totals.Sugar),
+                ["calories_kcal"] = ExistingPlus("calories_kcal", totals.Calories),
             });
 
             // Per-food breakdown as a note, plus the scan's own total (2026-11-14) -- the
@@ -1079,11 +1082,11 @@ else
             // preference over a new food_log-style schema field).
             var portionNote = portion < 1 ? $" (portion: {portion:P0})" : "";
             var lines = scanned.Select(i =>
-                $"  {i.Food}: {i.Protein:0.#}g protein / {i.Carbs:0.#}g carbs / {i.Fat:0.#}g fat / " +
-                $"{i.Fiber:0.#}g fiber / {i.Sugar:0.#}g sugar");
+                $"  {i.Food}: {i.Calories:0.#} kcal / {i.Protein:0.#}g protein / {i.Carbs:0.#}g carbs / " +
+                $"{i.Fat:0.#}g fat / {i.Fiber:0.#}g fiber / {i.Sugar:0.#}g sugar");
             await Api.AddNoteAsync(_selectedItem.Id,
                 $"Scanned{portionNote}:\n{string.Join("\n", lines)}\n" +
-                $"Total: {totals.Protein:0.#}g protein / {totals.Carbs:0.#}g carbs / " +
+                $"Total: {totals.Calories:0.#} kcal / {totals.Protein:0.#}g protein / {totals.Carbs:0.#}g carbs / " +
                 $"{totals.Fat:0.#}g fat / {totals.Fiber:0.#}g fiber / {totals.Sugar:0.#}g sugar.",
                 _selectedStageId);
 
