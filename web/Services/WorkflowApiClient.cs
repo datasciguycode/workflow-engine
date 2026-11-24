@@ -287,6 +287,42 @@ public class WorkflowApiClient
         )).ToList();
     }
 
+    // item_events is append-only (no UPDATE/DELETE policy, ever -- 20261012035437), so clearing
+    // notes can't delete the item.note_added rows themselves. clear_notes (20261124000000) instead
+    // stamps a marker event for the stage being cleared; this fetches the latest marker per stage
+    // so the UI can hide any note at or before it (replay-the-log, same approach item.stage_changed
+    // already uses for its own "cleared" snapshot).
+    public async Task<Dictionary<string, DateTimeOffset>> GetNoteClearMarkersAsync(string itemId)
+    {
+        var req = await NewRequestAsync(HttpMethod.Get,
+            $"/rest/v1/item_events?item_id=eq.{itemId}&event_type=eq.item.notes_cleared&select=stage_id,created_at&order=created_at.desc");
+        var res = await _http.SendAsync(req);
+        res.EnsureSuccessStatusCode();
+        var rows = await res.Content.ReadFromJsonAsync<List<JsonObject>>() ?? [];
+        var markers = new Dictionary<string, DateTimeOffset>();
+        foreach (var r in rows)
+        {
+            var stageId = r["stage_id"]?.GetValue<string>();
+            // Latest wins -- rows arrive newest-first, so only the first marker seen per stage.
+            if (stageId is not null && !markers.ContainsKey(stageId))
+                markers[stageId] = r["created_at"]!.GetValue<DateTimeOffset>();
+        }
+        return markers;
+    }
+
+    public async Task ClearNotesAsync(string itemId, string stageId)
+    {
+        var req = await NewRequestAsync(HttpMethod.Post, "/rest/v1/rpc/clear_notes");
+        req.Content = JsonContent.Create(new JsonObject
+        {
+            ["p_item_id"] = itemId,
+            ["p_stage_id"] = stageId,
+        });
+        var res = await _http.SendAsync(req);
+        if (!res.IsSuccessStatusCode)
+            throw new HttpRequestException($"clear_notes failed ({(int)res.StatusCode}): {await res.Content.ReadAsStringAsync()}");
+    }
+
     // Same RPC the agent's move_stage tool calls (supabase/functions/agent-loop/index.ts) --
     // used directly by the UI's "Done" button so advancing a stage doesn't require going through
     // chat once its checklist is already complete (2026-11-05).
