@@ -82,7 +82,7 @@ else
                     var source = onCurrentStage ? _selectedItem.Data : pastStageSnapshot;
                     JsonNode? v = null;
                     var hasValue = source is not null && source.TryGetPropertyValue(field, out v) && v is not null;
-                    var (baseLabel, unit, unitPrefix) = FieldLabelAndUnit(field);
+                    var (baseLabel, unit, unitPrefix, isNumeric) = FieldLabelAndUnit(field);
                     var star = selectedStage.OptionalChecklist.Contains(field) ? "" : " *";
                     <div style="opacity:0.75; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">
                         @(hasValue ? "☑" : "☐")
@@ -90,7 +90,7 @@ else
                         {
                             @($"{baseLabel}{star}")
                         }
-                        else if (unit.Length > 0)
+                        else if (isNumeric)
                         {
                             @(unitPrefix
                                 ? $"{unit}{UnitValueText(field, v, unit)} {baseLabel}{star}"
@@ -847,8 +847,10 @@ else
     // a dollar sign reads naturally BEFORE the number ("$12.50 Tolls", not "12.50$ Tolls"), hence
     // the Prefix flag threaded through below. "_kcal" added 2026-11-23 (Nutrition Tracker's
     // weight_lbs -> calories_kcal swap). Anything else falls back to the plain label with no unit.
+    // "_kcal"'s unit is blank (2026-11-24 user request: no "kcal" text before the word Calories)
+    // -- still matched as a known numeric suffix below, just rendered with nothing glued on.
     private static readonly (string Suffix, string Unit, bool Prefix)[] FieldUnitSuffixes =
-        [("_g", "g", false), ("_lbs", "lbs", false), ("_usd", "$", true), ("_kcal", "kcal", false)];
+        [("_g", "g", false), ("_lbs", "lbs", false), ("_usd", "$", true), ("_kcal", "", false)];
 
     // A field whose generic (key-derived) label would otherwise mislead -- "phone_usd" needs to
     // read as a once-a-month entry, not something logged on every shift/expense like gas or
@@ -876,14 +878,17 @@ else
         return Capitalize(field.Replace('_', ' '));
     }
 
-    private static (string Label, string Unit, bool UnitPrefix) FieldLabelAndUnit(string field)
+    // IsNumeric is true for any matched suffix, even "_kcal"'s blank unit -- it's what tells the
+    // checklist renderer to use the "value label" layout (e.g. "1230 Calories") instead of the
+    // "label: value" fallback meant for fields with no known unit at all (e.g. a plain string).
+    private static (string Label, string Unit, bool UnitPrefix, bool IsNumeric) FieldLabelAndUnit(string field)
     {
         foreach (var (suffix, unit, prefix) in FieldUnitSuffixes)
         {
             if (field.EndsWith(suffix, StringComparison.Ordinal))
-                return (ChecklistLabel(field), unit, prefix);
+                return (ChecklistLabel(field), unit, prefix, true);
         }
-        return (ChecklistLabel(field), "", false);
+        return (ChecklistLabel(field), "", false, false);
     }
 
     // _usd values are stored as plain numbers (e.g. 12.5) but should always read like money
