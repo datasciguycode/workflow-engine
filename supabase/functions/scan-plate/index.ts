@@ -38,6 +38,10 @@ type FoodItem = {
   // (protein/carbs*4 + fat*9) the report used to compute, since it already accounts for label
   // rounding, fiber, and anything else the simple per-gram factors miss.
   calories_kcal: number;
+  // Added 2026-11-24 (user request) -- display-only, not summed into any report field. Lets the
+  // user judge the portion-size guess itself (e.g. "avocado, ~40g") instead of only seeing the
+  // macros that guess implies.
+  estimated_grams: number;
 };
 
 // Per-food breakdown instead of one lumped total (2026-11-14) -- the user wants to see what
@@ -76,11 +80,14 @@ const MAX_IMPLIED_KCAL = 3000;
 // from components (fiber, sugar alcohols) the simple 4/4/9 factors don't capture. This only
 // catches the same kind of wild, decimal-point-misplaced answer the macro bounds above do.
 const MAX_CALORIES_KCAL = 3000;
+// A whole uncut watermelon is still under this -- generous enough to never reject a real single
+// plate/container, same intent as the macro ceilings above.
+const MAX_ESTIMATED_GRAMS = 5000;
 
 function parseFoodItem(raw: unknown): FoodItem | null {
   if (typeof raw !== "object" || raw === null) return null;
   const p = raw as Record<string, unknown>;
-  const { food, protein_g, carbs_g, fat_g, fiber_g, sugar_g, calories_kcal } = p;
+  const { food, protein_g, carbs_g, fat_g, fiber_g, sugar_g, calories_kcal, estimated_grams } = p;
   if (
     typeof food !== "string" || food.trim() === "" ||
     typeof protein_g !== "number" || !Number.isFinite(protein_g) ||
@@ -88,14 +95,21 @@ function parseFoodItem(raw: unknown): FoodItem | null {
     typeof fat_g !== "number" || !Number.isFinite(fat_g) ||
     typeof fiber_g !== "number" || !Number.isFinite(fiber_g) ||
     typeof sugar_g !== "number" || !Number.isFinite(sugar_g) ||
-    typeof calories_kcal !== "number" || !Number.isFinite(calories_kcal)
+    typeof calories_kcal !== "number" || !Number.isFinite(calories_kcal) ||
+    typeof estimated_grams !== "number" || !Number.isFinite(estimated_grams)
   ) {
     return null;
   }
-  if (protein_g < 0 || carbs_g < 0 || fat_g < 0 || fiber_g < 0 || sugar_g < 0 || calories_kcal < 0) return null;
+  if (
+    protein_g < 0 || carbs_g < 0 || fat_g < 0 || fiber_g < 0 || sugar_g < 0 ||
+    calories_kcal < 0 || estimated_grams < 0
+  ) {
+    return null;
+  }
   if (calories_kcal > MAX_CALORIES_KCAL) return null;
+  if (estimated_grams > MAX_ESTIMATED_GRAMS) return null;
   if (fiber_g + sugar_g > carbs_g + CARB_COMPONENT_SLACK_G) return null;
-  return { food, protein_g, carbs_g, fat_g, fiber_g, sugar_g, calories_kcal };
+  return { food, protein_g, carbs_g, fat_g, fiber_g, sugar_g, calories_kcal, estimated_grams };
 }
 
 function parseEstimate(raw: string): FoodEstimate | null {
@@ -193,15 +207,21 @@ Deno.serve(async (req) => {
         "everything into one combined total. Respond with ONLY a single JSON object, no other " +
         "text, no markdown fences, in exactly this shape: " +
         '{"items": [{"food": "<short name>", "protein_g": <number>, "carbs_g": <number>, ' +
-        '"fat_g": <number>, "fiber_g": <number>, "sugar_g": <number>, "calories_kcal": <number>}, ' +
-        '...], "uncertainty_note": "<short string>"}. ' +
-        "All five gram values per item are for the FULL visible quantity -- the entire " +
+        '"fat_g": <number>, "fiber_g": <number>, "sugar_g": <number>, "calories_kcal": <number>, ' +
+        '"estimated_grams": <number>}, ...], "uncertainty_note": "<short string>"}. ' +
+        "All five gram-of-macro values per item are for the FULL visible quantity -- the entire " +
         "plate/container as shown, not a guess at how much of it was actually eaten. " +
         "calories_kcal is that same full quantity's calorie count: if a number is printed on a " +
         "nutrition label (per serving, times servings per container/visible quantity), use that " +
         "exact figure -- it already accounts for rounding and components (fiber, sugar alcohols) " +
         "the standard 4 kcal/g protein, 4 kcal/g carbs, 9 kcal/g fat factors don't capture. " +
         "Otherwise estimate calories_kcal with those factors, same as the grams above. " +
+        "estimated_grams is that item's own total weight in grams (the FULL visible quantity, same " +
+        "basis as everything else here) -- if a serving size or net weight is printed on a label, " +
+        "use it (times servings per container, same as calories_kcal); otherwise give your best " +
+        "visual weight estimate. This is shown to the user alongside the macros so they can judge " +
+        "the portion-size guess for themselves -- it is not itself a macro and is never scaled by " +
+        "the other four gram values. " +
         `The app separately asked the person what fraction they ate (${portion} here, where 1 ` +
         "means all of it) and will multiply your numbers by that fraction itself, so never " +
         "reduce your estimate, zero it out, or decline to answer because the consumed amount is " +
@@ -221,7 +241,8 @@ Deno.serve(async (req) => {
         "added sugar or oil, or a composite dish that's harder to decompose than separated whole " +
         "foods. If you can't identify any food in the photo, respond with " +
         '{"items": [{"food": "none", "protein_g": 0, "carbs_g": 0, "fat_g": 0, "fiber_g": 0, ' +
-        '"sugar_g": 0, "calories_kcal": 0}], "uncertainty_note": "no food identified in photo"}.',
+        '"sugar_g": 0, "calories_kcal": 0, "estimated_grams": 0}], "uncertainty_note": "no food ' +
+        'identified in photo"}.',
       messages: [
         {
           role: "user",
