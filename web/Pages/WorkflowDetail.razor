@@ -732,7 +732,7 @@ else
     // date filter (today's default, same as before), set means narrow whatever hide-closed
     // already produced down to just that day.
     private bool UsesDateFilter => string.Equals(_workflow?.ItemLabel, "meal date", StringComparison.OrdinalIgnoreCase);
-    private DateOnly? _filterDate;
+    private DateOnly? _filterDate = DateOnly.FromDateTime(DateTime.Now);
     private DateOnly EffectiveMealDate => _filterDate ?? DateOnly.FromDateTime(DateTime.Now);
 
     private void OnFilterDateChanged(ChangeEventArgs e)
