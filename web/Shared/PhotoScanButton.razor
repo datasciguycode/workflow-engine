@@ -1,0 +1,22 @@
+@* Shared "pick a photo -> busy button -> error" pattern behind Scan VIN /
+   Scan Plate / Scan odometer (2026-11-25) -- see WorkflowDetail.razor's
+   comments on those blocks for why this is intentionally this narrow: each
+   scan type's own extra fields and result handling stay where they are. *@
+<label for="@InputId" class="fluent-button-like" style="display:inline-block; cursor:pointer;">
+    <FluentButton Appearance="ButtonAppearance.Primary" Disabled="Busy">
+        @(Busy ? "Scanning..." : Label)
+    </FluentButton>
+</label>
+<InputFile id="@InputId" OnChange="OnFileSelected" accept="image/*" style="display:none;" />
+@if (ErrorMessage is not null)
+{
+    <p style="opacity:0.75; color:var(--colorPaletteRedForeground1, #c00);">@ErrorMessage</p>
+}
+
+@code {
+    [Parameter, EditorRequired] public string InputId { get; set; } = "";
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public bool Busy { get; set; }
+    [Parameter, EditorRequired] public EventCallback<InputFileChangeEventArgs> OnFileSelected { get; set; }
+    [Parameter] public string? ErrorMessage { get; set; }
+}

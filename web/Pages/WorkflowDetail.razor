@@ -130,16 +130,8 @@ else
                accept="image/*" alone still lets the OS offer "Take Photo" as a choice too. The
                photo itself is never stored or kept around after the scan (see ScanVinAsync). *@
             <div style="margin-bottom:12px;">
-                <label for="vin-photo-input" class="fluent-button-like" style="display:inline-block; cursor:pointer;">
-                    <FluentButton Appearance="ButtonAppearance.Primary" Disabled="_scanningVin">
-                        @(_scanningVin ? "Scanning..." : "Scan VIN")
-                    </FluentButton>
-                </label>
-                <InputFile id="vin-photo-input" OnChange="OnVinPhotoSelected" accept="image/*" style="display:none;" />
-                @if (_vinScanError is not null)
-                {
-                    <p style="opacity:0.75; color:var(--colorPaletteRedForeground1, #c00);">@_vinScanError</p>
-                }
+                <PhotoScanButton InputId="vin-photo-input" Label="Scan VIN" Busy="_scanningVin"
+                                  OnFileSelected="OnVinPhotoSelected" ErrorMessage="_vinScanError" />
             </div>
         }
         @if (_selectedStageId == _selectedItem.StageId && _stages.FirstOrDefault(s => s.Id == _selectedStageId)?.Checklist.Contains("protein_g") == true)
@@ -156,20 +148,12 @@ else
                 <label for="plate-portion-input" style="opacity:0.75; margin-right:6px;">Portion of this photo you ate:</label>
                 <input id="plate-portion-input" type="number" step="0.1" min="0.1" max="1" @bind="_plateScanPortion"
                        style="width:60px; margin-right:12px;" />
-                <label for="plate-photo-input" class="fluent-button-like" style="display:inline-block; cursor:pointer;">
-                    <FluentButton Appearance="ButtonAppearance.Primary" Disabled="_scanningPlate">
-                        @(_scanningPlate ? "Scanning..." : "Scan Plate")
-                    </FluentButton>
-                </label>
-                <InputFile id="plate-photo-input" OnChange="OnFoodPhotoSelected" accept="image/*" style="display:none;" />
                 @if (_plateScanNote is not null)
                 {
                     <p style="opacity:0.75;">@_plateScanNote</p>
                 }
-                @if (_plateScanError is not null)
-                {
-                    <p style="opacity:0.75; color:var(--colorPaletteRedForeground1, #c00);">@_plateScanError</p>
-                }
+                <PhotoScanButton InputId="plate-photo-input" Label="Scan Plate" Busy="_scanningPlate"
+                                  OnFileSelected="OnFoodPhotoSelected" ErrorMessage="_plateScanError" />
             </div>
         }
         @if (_selectedStageId == _selectedItem.StageId
@@ -188,12 +172,8 @@ else
             if (hasPlatformField) { EnsurePlatformPrefill(_selectedItem); }
             var currentOdometerReading = ReadNumeric(_selectedItem.Data[odometerKey]);
             <div style="margin-bottom:12px;">
-                <label for="@($"{prefix}-odometer-photo-input")" class="fluent-button-like" style="display:inline-block; cursor:pointer;">
-                    <FluentButton Appearance="ButtonAppearance.Primary" Disabled="_scanningOdometer">
-                        @(_scanningOdometer ? "Scanning..." : "Scan odometer")
-                    </FluentButton>
-                </label>
-                <InputFile id="@($"{prefix}-odometer-photo-input")" OnChange="e => OnOdometerPhotoSelected(e, prefix)" accept="image/*" style="display:none;" />
+                <PhotoScanButton InputId="@($"{prefix}-odometer-photo-input")" Label="Scan odometer" Busy="_scanningOdometer"
+                                  OnFileSelected="@(e => OnOdometerPhotoSelected(e, prefix))" ErrorMessage="@null" />
                 <span style="margin-left:8px; opacity:0.75;">or type reading:</span>
                 <input type="number" step="0.1" min="0" @bind="_odometerTypedInput" style="width:90px; margin-left:4px;" />
                 <FluentButton @onclick="() => SaveTypedOdometer(prefix)">Save</FluentButton>
@@ -1061,10 +1041,20 @@ else
     private bool _scanningVin;
     private string? _vinScanError;
 
-    // Resizes client-side via RequestImageFileAsync (works in WASM, not just Blazor Server --
-    // it draws to an off-screen canvas via JS interop either way) before sending, since a raw
-    // phone photo is several MB and that cost (upload time + tokens) adds up fast (2026-11-11).
-    // The photo is never persisted anywhere -- read once here, handed to scan-vin, discarded.
+    // Shared by every photo-scan handler (Scan VIN/Plate/odometer, 2026-11-25) -- resizes
+    // client-side via RequestImageFileAsync (works in WASM, not just Blazor Server -- it draws
+    // to an off-screen canvas via JS interop either way) before sending, since a raw phone photo
+    // is several MB and that cost (upload time + tokens) adds up fast (2026-11-11). The photo is
+    // never persisted anywhere -- read once here, handed to the matching edge function, discarded.
+    private static async Task<string> ReadPhotoAsJpegBase64Async(IBrowserFile file)
+    {
+        var resized = await file.RequestImageFileAsync("image/jpeg", 1600, 1600);
+        using var stream = resized.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms);
+        return Convert.ToBase64String(ms.ToArray());
+    }
+
     private async Task OnVinPhotoSelected(InputFileChangeEventArgs e)
     {
         if (_scanningVin || _selectedItem is null) return;
@@ -1072,11 +1062,7 @@ else
         _vinScanError = null;
         try
         {
-            var resized = await e.File.RequestImageFileAsync("image/jpeg", 1600, 1600);
-            using var stream = resized.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
-            using var ms = new MemoryStream();
-            await stream.CopyToAsync(ms);
-            var base64 = Convert.ToBase64String(ms.ToArray());
+            var base64 = await ReadPhotoAsJpegBase64Async(e.File);
 
             var vin = await Api.ScanVinAsync(base64, "image/jpeg");
             if (vin is null)
@@ -1142,11 +1128,7 @@ else
         _plateScanNote = null;
         try
         {
-            var resized = await e.File.RequestImageFileAsync("image/jpeg", 1600, 1600);
-            using var stream = resized.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
-            using var ms = new MemoryStream();
-            await stream.CopyToAsync(ms);
-            var base64 = Convert.ToBase64String(ms.ToArray());
+            var base64 = await ReadPhotoAsJpegBase64Async(e.File);
 
             // Passed through so the model knows the app already asks "how much did you eat" --
             // without it, a photo it can't itself judge consumption from (an unopened,
@@ -1307,11 +1289,7 @@ else
         _captureStartedAt = DateTimeOffset.UtcNow;
         try
         {
-            var resized = await e.File.RequestImageFileAsync("image/jpeg", 1600, 1600);
-            using var stream = resized.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
-            using var ms = new MemoryStream();
-            await stream.CopyToAsync(ms);
-            var base64 = Convert.ToBase64String(ms.ToArray());
+            var base64 = await ReadPhotoAsJpegBase64Async(e.File);
 
             var result = await Api.ScanOdometerAsync(base64, "image/jpeg");
             if (result is null)
