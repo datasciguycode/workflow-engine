@@ -336,7 +336,7 @@ else
         <FluentLink @onclick="StartNewJob" Class="back-link" Disabled="_creatingItem">+ New @ItemLabelSingular</FluentLink>
         @if (UsesDateFilter)
         {
-            <input type="date" value="@_filterDate.ToString("yyyy-MM-dd")" @onchange="OnFilterDateChanged"
+            <input type="date" value="@EffectiveMealDate.ToString("yyyy-MM-dd")" @onchange="OnFilterDateChanged"
                    style="margin-left:16px;" />
         }
         else
@@ -344,6 +344,12 @@ else
             <FluentLink @onclick="@(() => _showClosed = !_showClosed)" Class="back-link" Style="margin-left:16px;">
                 @(_showClosed ? "Hide closed" : "Show closed")
             </FluentLink>
+            <input type="date" value="@(_filterDate?.ToString("yyyy-MM-dd") ?? "")" @onchange="OnFilterDateChanged"
+                   style="margin-left:16px;" />
+            @if (_filterDate is not null)
+            {
+                <FluentLink @onclick="ClearDateFilter" Class="back-link" Style="margin-left:8px;">Clear date</FluentLink>
+            }
         }
         @if (_workflow?.Report is not null) { <FluentLink Href="@($"workflow/{WorkflowId}/report")" Class="back-link" Style="margin-left:16px;">Report</FluentLink> }
 
@@ -720,19 +726,34 @@ else
     // report) rather than "an old finished job is out of the way". A date filter, defaulted to
     // today and editable, replaces it for this item_label: pick a day, see that day's item
     // whether closed or not.
+    //
+    // Other workflows liked the picker too (2026-11-25), but their items aren't one-per-day --
+    // "Show closed" still earns its keep there -- so the date filter is additive: null means no
+    // date filter (today's default, same as before), set means narrow whatever hide-closed
+    // already produced down to just that day.
     private bool UsesDateFilter => string.Equals(_workflow?.ItemLabel, "meal date", StringComparison.OrdinalIgnoreCase);
-    private DateOnly _filterDate = DateOnly.FromDateTime(DateTime.Now);
+    private DateOnly? _filterDate;
+    private DateOnly EffectiveMealDate => _filterDate ?? DateOnly.FromDateTime(DateTime.Now);
 
     private void OnFilterDateChanged(ChangeEventArgs e)
     {
-        if (DateOnly.TryParse(e.Value as string, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var d))
-            _filterDate = d;
+        _filterDate = DateOnly.TryParse(e.Value as string, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var d)
+            ? d
+            : null;
     }
 
-    private IEnumerable<ItemSummary> VisibleItems() =>
-        UsesDateFilter
-            ? _items!.Where(i => DateOnly.FromDateTime(i.CreatedAt.ToLocalTime().DateTime) == _filterDate)
-            : _showClosed ? _items! : _items!.Where(i => !IsClosed(i));
+    private void ClearDateFilter() => _filterDate = null;
+
+    private IEnumerable<ItemSummary> VisibleItems()
+    {
+        if (UsesDateFilter)
+            return _items!.Where(i => DateOnly.FromDateTime(i.CreatedAt.ToLocalTime().DateTime) == EffectiveMealDate);
+
+        var baseItems = _showClosed ? _items! : _items!.Where(i => !IsClosed(i));
+        return _filterDate is { } d
+            ? baseItems.Where(i => DateOnly.FromDateTime(i.CreatedAt.ToLocalTime().DateTime) == d)
+            : baseItems;
+    }
 
     private string ItemTitle(ItemSummary item)
     {
