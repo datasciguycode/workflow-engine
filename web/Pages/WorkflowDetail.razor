@@ -334,9 +334,17 @@ else
     {
         <h1>@ItemLabelPlural</h1>
         <FluentLink @onclick="StartNewJob" Class="back-link" Disabled="_creatingItem">+ New @ItemLabelSingular</FluentLink>
-        <FluentLink @onclick="@(() => _showClosed = !_showClosed)" Class="back-link" Style="margin-left:16px;">
-            @(_showClosed ? "Hide closed" : "Show closed")
-        </FluentLink>
+        @if (UsesDateFilter)
+        {
+            <input type="date" value="@_filterDate.ToString("yyyy-MM-dd")" @onchange="OnFilterDateChanged"
+                   style="margin-left:16px;" />
+        }
+        else
+        {
+            <FluentLink @onclick="@(() => _showClosed = !_showClosed)" Class="back-link" Style="margin-left:16px;">
+                @(_showClosed ? "Hide closed" : "Show closed")
+            </FluentLink>
+        }
         @if (_workflow?.Report is not null) { <FluentLink Href="@($"workflow/{WorkflowId}/report")" Class="back-link" Style="margin-left:16px;">Report</FluentLink> }
 
         @* Tap-to-search (2026-11-08): no live-as-you-type filtering, so searching never fires a
@@ -706,8 +714,25 @@ else
         && st.Checklist.Except(st.OptionalChecklist)
              .All(f => i.Data.TryGetPropertyValue(f, out var v) && v is not null);
 
+    // "meal date" workflows (Nutrition Tracker) get one new item per calendar day rather than
+    // one per unit of work, so hide-closed is the wrong filter there -- it hid *today's* item
+    // the moment dinner was logged, which reads as "my data disappeared" (2026-11-25 user
+    // report) rather than "an old finished job is out of the way". A date filter, defaulted to
+    // today and editable, replaces it for this item_label: pick a day, see that day's item
+    // whether closed or not.
+    private bool UsesDateFilter => string.Equals(_workflow?.ItemLabel, "meal date", StringComparison.OrdinalIgnoreCase);
+    private DateOnly _filterDate = DateOnly.FromDateTime(DateTime.Now);
+
+    private void OnFilterDateChanged(ChangeEventArgs e)
+    {
+        if (DateOnly.TryParse(e.Value as string, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var d))
+            _filterDate = d;
+    }
+
     private IEnumerable<ItemSummary> VisibleItems() =>
-        _showClosed ? _items! : _items!.Where(i => !IsClosed(i));
+        UsesDateFilter
+            ? _items!.Where(i => DateOnly.FromDateTime(i.CreatedAt.ToLocalTime().DateTime) == _filterDate)
+            : _showClosed ? _items! : _items!.Where(i => !IsClosed(i));
 
     private string ItemTitle(ItemSummary item)
     {
