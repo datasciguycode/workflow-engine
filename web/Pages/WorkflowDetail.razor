@@ -315,7 +315,10 @@ else
     else
     {
         <h1>@ItemLabelPlural</h1>
-        <FluentLink @onclick="StartNewJob" Class="back-link" Disabled="_creatingItem">+ New @ItemLabelSingular</FluentLink>
+        @if (!HasItemForEffectiveMealDate)
+        {
+            <FluentLink @onclick="StartNewJob" Class="back-link" Disabled="_creatingItem">+ New @ItemLabelSingular</FluentLink>
+        }
         @if (UsesDateFilter)
         {
             <input type="date" value="@EffectiveMealDate.ToString("yyyy-MM-dd")" @onchange="OnFilterDateChanged"
@@ -716,6 +719,16 @@ else
     private bool UsesDateFilter => string.Equals(_workflow?.ItemLabel, "meal date", StringComparison.OrdinalIgnoreCase);
     private DateOnly? _filterDate = DateOnly.FromDateTime(DateTime.Now);
     private DateOnly EffectiveMealDate => _filterDate ?? DateOnly.FromDateTime(DateTime.Now);
+
+    // Meal-date workflows get one item per calendar day, so a second "+ New" tap for a day that
+    // already has one doesn't add a second day -- it silently forks the day into two orphaned
+    // items (2026-11-26 user report: an empty duplicate sat alongside the real, already-filled
+    // one, and there's no delete button to undo it -- see the DB cleanup that day). Hiding the
+    // link once the currently-viewed date already has an item prevents the fork at the source
+    // instead of needing a way to undo it after the fact.
+    private bool HasItemForEffectiveMealDate =>
+        UsesDateFilter && _items is not null
+        && _items.Any(i => DateOnly.FromDateTime(i.CreatedAt.ToLocalTime().DateTime) == EffectiveMealDate);
 
     private void OnFilterDateChanged(ChangeEventArgs e)
     {
