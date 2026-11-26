@@ -44,29 +44,34 @@ Prod is behind dev. None of these have been ported:
 `plans/diet-workflow/test-plate.jpg` is intentionally **not** committed (personal photo, public
 repo).
 
-## In progress: Rideshare Mileage/Expenses workflows
+## Rideshare Mileage/Expenses workflows — shipped on dev
 
 Vetted plan (plan-pipeline, approved-with-changes): `plans/uber-mileage-tracker/final-plan.md`.
 Two dev-only workflows for Uber/Lyft drivers — "Rideshare Mileage" (shift-level odometer-photo
 scan at Start/End, derived miles/hours, optional tolls/parking/earnings) and "Rideshare Expenses"
 (flat category/amount/date log) — plus four generic report-engine extensions (signed derived
 weights, hidden fields, timestamp parsing, item_date_key) that the Mileage workflow needs. GPS/
-reverse-geocoding was dropped in favor of plain manual address text fields after further
-discussion with the user; no third-party geocoding service is used anywhere in this feature.
+reverse-geocoding was dropped in favor of plain manual address text fields.
 
-**Done:** Steps 1–4. Both migrations (`20261120000000` engine extensions,
-`20261120010000_add_rideshare_workflows.sql`) are applied to dev. `scripts/report_series_dev_check.sql`
-(37 reject cases + 2 accept cases) and the new `scripts/rideshare_report_dev_check.sql` (two-shift
-week miles/hours, in-progress shift, malformed `end_time`, expense date bucketing) both PASS.
-Nutrition Tracker's report output is byte-identical before/after. The two Rideshare workflows and
-their report configs now exist on dev; no UI/edge-function work has happened yet.
+Steps 1–6 all done and pushed: migrations, edge functions (`scan-odometer`, date-aware
+`agent-loop`), and web UI (odometer capture block, `_usd`/date-only field rendering, Jobs-list
+closed rule, display-name disambiguation). Live-tested on dev via phone.
 
-**Next concrete step:** Step 5 — edge functions: `scan-odometer` (copied from `scan-plate`'s
-one-shot vision pattern) and the generic `agent-loop` change so the chat agent knows today's date
-(needed for expenses logged by relative date, e.g. "$42.10 gas yesterday"). Then Step 6 (web
-changes: odometer capture block, `_usd`/date-only field rendering, the Jobs-list "closed" rule
-change, display-name disambiguation for same-day items). Full spec in
-`plans/uber-mileage-tracker/final-plan.md`.
+## Shared across workflows, from live testing (2026-11-25/26)
+
+- **Date filter** replaced/augmented the old hide-closed toggle: Nutrition Tracker ("meal date"
+  item_label) shows one date-defaulted-to-today picker instead of hide-closed, since it's one
+  item per calendar day and hide-closed was hiding the just-logged item. Other job-style
+  workflows kept Show/Hide closed and got the same date picker as an additive narrowing filter,
+  both defaulting to today.
+- **`PhotoScanButton` shared component** (`web/Shared/PhotoScanButton.razor`) + a shared
+  `ReadPhotoAsJpegBase64Async` helper in `WorkflowDetail.razor` dedupe the button/input/error
+  markup and resize/base64 boilerplate across Scan VIN/Plate/odometer, while leaving each scan
+  type's own extra fields and result handling untouched (plan: `plans/tingly-whistling-scroll.md`
+  if still present under `~/.claude/plans/`, otherwise see commit `bf90e90`).
+- Scan Plate briefly grew a "measured grams" either/or field (commits `66a5473`, `9eab5ce`) and
+  it was reverted the same day (`5f37b1c`) once the user realized they can just scan the kitchen
+  scale's own reading instead — portion-of-photo is the only input again.
 
 ## Outstanding
 
